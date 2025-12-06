@@ -1,0 +1,17 @@
+{
+  "extName": {
+    "message": "LinguaLive Pro – Ζωντανοί Υπότιτλοι & Μετάφραση"
+  },
+  "extDescription": {
+    "message": "Ζωντανοί υπότιτλοι και μετάφραση πάνω από οποιαδήποτε καρτέλα, με την ισχύ του LinguaLive Pro."
+  },
+  "commandToggleCaptions": {
+    "message": "Εναλλαγή υποτίτλων για την τρέχουσα καρτέλα"
+  },
+  "commandOpenOptions": {
+    "message": "Άνοιγμα ρυθμίσεων LinguaLive Pro"
+  },
+  "contextMenuToggleCaptions": {
+    "message": "Εναλλαγή υποτίτλων LinguaLive"
+  }
+}

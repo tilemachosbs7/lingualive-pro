@@ -1,0 +1,20 @@
+{
+  "name": "lingualive-pro-extension",
+  "version": "0.1.0",
+  "description": "LinguaLive Pro browser extension for real-time captions and translation",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "tsc",
+    "lint": "eslint src --ext .ts,.tsx",
+    "test": "echo 'No tests configured yet'"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.0",
+    "@types/chrome": "^0.0.260",
+    "eslint": "^8.57.0",
+    "@typescript-eslint/parser": "^7.0.0",
+    "@typescript-eslint/eslint-plugin": "^7.0.0"
+  }
+}

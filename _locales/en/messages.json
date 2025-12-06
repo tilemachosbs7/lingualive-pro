@@ -1,0 +1,17 @@
+{
+  "extName": {
+    "message": "LinguaLive Pro – Live Captions & Translation"
+  },
+  "extDescription": {
+    "message": "Real-time captions and translation overlay for any tab, powered by LinguaLive Pro."
+  },
+  "commandToggleCaptions": {
+    "message": "Toggle captions for the current tab"
+  },
+  "commandOpenOptions": {
+    "message": "Open LinguaLive Pro settings"
+  },
+  "contextMenuToggleCaptions": {
+    "message": "Toggle LinguaLive captions"
+  }
+}

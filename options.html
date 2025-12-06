@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>LinguaLive Pro – Options</title>
+    <style>
+      /* Simple, lightweight CSS, no frameworks */
+      body {
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+          Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+        margin: 0;
+        padding: 1.5rem;
+        background: #fafafa;
+        color: #333;
+        min-width: 400px;
+      }
+
+      h1 {
+        font-size: 1.5rem;
+        margin: 0 0 1rem 0;
+        color: #1a1a1a;
+      }
+
+      .section {
+        margin-bottom: 1.5rem;
+        padding: 1rem;
+        background: #fff;
+        border: 1px solid #ddd;
+        border-radius: 8px;
+      }
+
+      .section h2 {
+        margin: 0 0 0.75rem 0;
+        font-size: 1.1rem;
+        color: #444;
+      }
+
+      .section > div {
+        margin-bottom: 0.4rem;
+        font-size: 0.95rem;
+      }
+
+      .section > div:last-child {
+        margin-bottom: 0;
+      }
+
+      .error {
+        color: #b00020;
+        background: #fff0f0;
+        padding: 0.75rem;
+        border-radius: 6px;
+        border: 1px solid #ffcccc;
+        margin-bottom: 1rem;
+      }
+
+      .muted {
+        color: #666;
+        font-size: 0.9rem;
+        margin-bottom: 1rem;
+      }
+
+      .badge {
+        display: inline-block;
+        padding: 0.15rem 0.5rem;
+        border-radius: 999px;
+        font-size: 0.8rem;
+        font-weight: 500;
+        background: #e8f4fd;
+        color: #0969da;
+        border: 1px solid #b6daff;
+      }
+
+      .badge.pro {
+        background: #ddf4ff;
+        color: #0550ae;
+      }
+
+      .badge.enterprise {
+        background: #fbefff;
+        color: #8250df;
+      }
+
+      .badge.ok {
+        background: #d4edda;
+        color: #155724;
+        border-color: #c3e6cb;
+      }
+
+      .badge.near {
+        background: #fff3cd;
+        color: #856404;
+        border-color: #ffeeba;
+      }
+
+      .badge.exceeded {
+        background: #f8d7da;
+        color: #721c24;
+        border-color: #f5c6cb;
+      }
+
+      .limit-warning {
+        color: #856404;
+        font-size: 0.85rem;
+      }
+
+      .limit-exceeded {
+        color: #721c24;
+        font-size: 0.85rem;
+        font-weight: 500;
+      }
+
+      /* Diagnostics styles */
+      .diag-row {
+        display: flex;
+        align-items: flex-start;
+        gap: 0.5rem;
+        padding: 0.4rem 0;
+        border-bottom: 1px solid #eee;
+      }
+
+      .diag-row:last-child {
+        border-bottom: none;
+      }
+
+      .diag-icon {
+        flex-shrink: 0;
+        font-size: 1rem;
+        width: 1.5rem;
+        text-align: center;
+      }
+
+      .diag-name {
+        font-weight: 500;
+        color: #444;
+        min-width: 120px;
+      }
+
+      .diag-result {
+        color: #666;
+        flex: 1;
+      }
+
+      .diag-result.success {
+        color: #2e7d32;
+      }
+
+      .diag-result.error {
+        color: #b00020;
+      }
+
+      .diag-result.info {
+        color: #1976d2;
+      }
+
+      .diag-result.skipped {
+        color: #666;
+        font-style: italic;
+      }
+
+      .value {
+        font-weight: 500;
+        color: #1a1a1a;
+      }
+
+      button {
+        padding: 0.5rem 1rem;
+        border-radius: 6px;
+        border: 1px solid #ccc;
+        background: #fff;
+        cursor: pointer;
+        font-size: 0.9rem;
+        transition: background 0.15s, border-color 0.15s;
+      }
+
+      button:hover {
+        background: #f5f5f5;
+        border-color: #999;
+      }
+
+      button:active {
+        background: #eee;
+      }
+
+      button:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
+
+      .label {
+        color: #666;
+      }
+
+      .summary-panel {
+        background: linear-gradient(135deg, #f0f7ff 0%, #fff 100%);
+        border-color: #b6daff;
+      }
+
+      .upgrade-link {
+        display: inline-block;
+        padding: 0.4rem 0.8rem;
+        background: #0969da;
+        color: #fff;
+        text-decoration: none;
+        border-radius: 6px;
+        font-size: 0.85rem;
+        font-weight: 500;
+        transition: background 0.15s;
+      }
+
+      .upgrade-link:hover {
+        background: #0550ae;
+      }
+
+      .inline-error {
+        color: #b00020;
+        font-size: 0.85rem;
+        margin-top: 0.5rem;
+      }
+
+      label {
+        display: block;
+        margin-bottom: 0.75rem;
+        font-size: 0.9rem;
+        color: #444;
+      }
+
+      label input,
+      label select {
+        display: block;
+        margin-top: 0.3rem;
+        padding: 0.4rem 0.6rem;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        font-size: 0.9rem;
+        width: 100%;
+        max-width: 200px;
+        box-sizing: border-box;
+      }
+
+      label input:focus,
+      label select:focus {
+        outline: none;
+        border-color: #0969da;
+        box-shadow: 0 0 0 2px rgba(9, 105, 218, 0.2);
+      }
+    </style>
+  </head>
+  <body>
+    <h1>LinguaLive Pro – Options</h1>
+
+    <div id="status" class="muted">Loading account info…</div>
+    <div id="error" class="error" style="display: none"></div>
+
+    <!-- Compact Account & Usage Summary Panel -->
+    <div class="section summary-panel" id="account-usage-summary">
+      <h2>Account & Usage</h2>
+      <div id="summary-content">
+        <div>
+          <span class="label">Plan:</span>
+          <span id="summary-plan" class="badge">–</span>
+          <span id="summary-limit-status" role="status" aria-live="polite" class="badge" style="display: none; margin-left: 0.5rem;">–</span>
+        </div>
+        <div>
+          <span class="label">Usage:</span>
+          <span id="summary-usage" class="value">–</span>
+        </div>
+        <div id="summary-upgrade-row" style="margin-top: 0.5rem;">
+          <a
+            id="summary-upgrade-btn"
+            href="https://lingualive.pro/pricing"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="upgrade-link"
+            aria-label="Άνοιγμα σελίδας αναβάθμισης πλάνου LinguaLive Pro"
+            style="display: none;"
+          >⬆ Upgrade to Pro</a>
+        </div>
+      </div>
+      <div id="summary-error" class="inline-error" style="display: none;"></div>
+      <div id="summary-no-auth" class="muted" style="display: none;">
+        Συνδέσου πρώτα στην LinguaLive για να δεις το πλάνο και τη χρήση σου.
+      </div>
+    </div>
+
+    <!-- Shortcuts & Controls Section -->
+    <div class="section" id="shortcuts-section">
+      <h2 id="shortcuts-section-title">Shortcuts & controls</h2>
+
+      <h3 id="shortcuts-how-to-start">How to start captions</h3>
+      <p id="shortcuts-how-to-start-steps">Click the LinguaLive Pro icon in the toolbar or use the keyboard shortcut or context menu.</p>
+
+      <h3 id="shortcuts-keyboard-heading">Keyboard shortcuts</h3>
+      <ul>
+        <li id="shortcuts-keyboard-toggle">Toggle captions: Alt+Shift+C</li>
+        <li id="shortcuts-keyboard-open-options">Open settings: Alt+Shift+O</li>
+      </ul>
+
+      <h3 id="shortcuts-context-menu-heading">Context menu</h3>
+      <p id="shortcuts-context-menu-description">Right-click on a page or video and choose "Toggle LinguaLive captions".</p>
+
+      <p id="shortcuts-chrome-customize" class="muted" style="margin-top: 1rem; font-size: 0.85rem;"></p>
+    </div>
+
+    <div class="section" id="account-section">
+      <h2>Account</h2>
+      <div>
+        <span class="label">User ID:</span>
+        <span id="user-id" class="value">–</span>
+      </div>
+      <div>
+        <span class="label">Auth source:</span>
+        <span id="auth-source" class="value">–</span>
+      </div>
+      <div>
+        <span class="label">Plan:</span>
+        <span id="plan-tier" class="badge">–</span>
+      </div>
+      <div>
+        <span class="label">Allowed quality modes:</span>
+        <span id="allowed-quality-modes" class="value">–</span>
+      </div>
+    </div>
+
+    <div class="section" id="limits-section">
+      <h2>Plan Limits</h2>
+      <div>
+        <span class="label">Per-session audio limit:</span>
+        <span id="audio-limit" class="value">–</span>
+        <span id="audio-limit-status" role="status" aria-live="polite" class="muted" style="margin-left: 0.5rem;"></span>
+      </div>
+      <div>
+        <span class="label">Per-session translation limit:</span>
+        <span id="translation-limit" class="value">–</span>
+        <span id="translation-limit-status" role="status" aria-live="polite" class="muted" style="margin-left: 0.5rem;"></span>
+      </div>
+    </div>
+
+    <div class="section" id="usage-section">
+      <h2>Usage & Billing</h2>
+      <div>
+        <span class="label">Total sessions:</span>
+        <span id="total-sessions" class="value">–</span>
+      </div>
+      <div>
+        <span class="label">Total audio minutes:</span>
+        <span id="total-audio-minutes" class="value">–</span>
+      </div>
+      <div>
+        <span class="label">Total transcript chars:</span>
+        <span id="total-transcript-chars" class="value">–</span>
+      </div>
+      <div>
+        <span class="label">Total translated chars:</span>
+        <span id="total-translated-chars" class="value">–</span>
+      </div>
+      <div>
+        <span class="label">Total billed amount:</span>
+        <span id="total-amount" class="value">–</span>
+      </div>
+    </div>
+
+    <div class="section" id="backend-auth-section">
+      <h2>Backend &amp; Auth</h2>
+
+      <label>
+        Backend base URL
+        <input id="llp-backend-url" type="text" placeholder="http://localhost:8000" />
+      </label>
+
+      <label>
+        Dev token (x-dev-token)
+        <input id="llp-dev-token" type="text" placeholder="paste dev token here" />
+      </label>
+
+      <label>
+        Debug user id (x-debug-user-id)
+        <input id="llp-debug-user-id" type="text" placeholder="user-123" />
+      </label>
+
+      <label>
+        Debug plan (x-debug-plan)
+        <input id="llp-debug-plan" type="text" placeholder="FREE / PRO / ENTERPRISE" />
+      </label>
+
+      <div style="margin-top: 0.75rem;">
+        <button id="test-connection-btn" type="button">Έλεγχος σύνδεσης</button>
+        <button id="generate-dev-token-btn" type="button" style="margin-left: 0.5rem;">Generate dev token</button>
+        <button id="revoke-dev-token-btn" type="button" style="margin-left: 0.5rem;">Revoke dev token</button>
+        <span id="connection-test-status" role="status" aria-live="polite" class="muted" style="margin-left: 0.5rem;"></span>
+      </div>
+      <div id="generate-dev-token-status" role="status" aria-live="polite" class="muted" style="margin-top: 0.5rem;"></div>
+      <p id="dev-token-expiry" class="muted" style="margin-top: 0.5rem; font-size: 0.85rem;"></p>
+    </div>
+
+    <div class="section" id="preferences-section">
+      <h2>Preferences</h2>
+
+      <label id="language-label">
+        Γλώσσα διεπαφής / Interface language
+        <select id="language-select">
+          <option value="auto">Αυτόματη (browser)</option>
+          <option value="el">Ελληνικά</option>
+          <option value="en">English</option>
+        </select>
+      </label>
+
+      <label>
+        Source language (BCP-47 code)
+        <input id="llp-source-lang" type="text" placeholder="en" />
+      </label>
+
+      <label>
+        Target language (BCP-47 code)
+        <input id="llp-target-lang" type="text" placeholder="en" />
+      </label>
+
+      <label>
+        Quality mode
+        <select id="llp-quality-mode">
+          <option value="FAST">FAST (lower latency)</option>
+          <option value="SMART">SMART (higher quality)</option>
+        </select>
+      </label>
+
+      <div style="margin-top: 0.75rem;">
+        <button id="save-btn">Save Preferences</button>
+        <span id="save-status" class="muted" style="margin-left: 0.5rem;"></span>
+      </div>
+    </div>
+
+    <!-- Diagnostics / Self-check Section -->
+    <div class="section" id="diagnostics-section">
+      <h2 id="diagnostics-title">Διαγνωστικά / Έλεγχος συστήματος</h2>
+      <p id="diagnostics-description" class="muted" style="margin-bottom: 0.75rem;">
+        Τρέξε έναν γρήγορο έλεγχο για να δεις αν όλα είναι σωστά ρυθμισμένα (backend, σύνδεση, μικρόφωνο).
+      </p>
+
+      <div style="margin-bottom: 1rem;">
+        <button id="run-diagnostics-btn" type="button">🔍 Γρήγορος έλεγχος</button>
+      </div>
+
+      <!-- Diagnostics Results -->
+      <div id="diagnostics-results" role="status" aria-live="polite" style="display: none;">
+        <div id="diagnostics-list" style="font-size: 0.9rem; line-height: 1.8;"></div>
+
+        <div style="margin-top: 1rem;">
+          <button id="copy-diagnostics-btn" type="button">📋 Αντιγραφή αναφοράς</button>
+          <span id="copy-status" class="muted" style="margin-left: 0.5rem;"></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Help & Troubleshooting Section -->
+    <div class="section" id="help-section">
+      <h2 id="help-section-title">Help & troubleshooting</h2>
+      <p id="help-when-to-use">If captions don't start, keep disconnecting, or something feels off, use the diagnostics before changing settings at random.</p>
+
+      <h3 id="help-steps-heading">Recommended steps</h3>
+      <ul>
+        <li id="help-step-check-backend">1. Run diagnostics and check that the backend status and realtime WebSocket checks are OK.</li>
+        <li id="help-step-check-mic">2. Check the microphone diagnostic and make sure your browser has permission to use the correct input device.</li>
+        <li id="help-step-copy-report">3. Use "Copy diagnostics to clipboard" and paste the report when contacting LinguaLive Pro support.</li>
+      </ul>
+
+      <p id="help-privacy-note" class="muted" style="font-size: 0.85rem; margin-top: 0.75rem;">The diagnostics report includes technical environment info (plan, browser, backend status) but never your audio or transcript content.</p>
+    </div>
+
+    <button id="refresh-btn">Refresh</button>
+
+    <script type="module" src="dist/options.js"></script>
+  </body>
+</html>
