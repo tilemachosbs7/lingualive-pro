@@ -23,7 +23,15 @@ class TranslationService:
     async def translate_text(self, text: str, source_lang: str | None, target_lang: str, provider: str = "deepl") -> str:
         """Translate using selected provider or fallback."""
         
-        # Use selected provider
+        # Google Cloud Translation
+        if provider == "google":
+            try:
+                return await self._translate_google(text, target_lang, source_lang)
+            except Exception as e:
+                print(f"Google Cloud error (falling back to OpenAI): {e}")
+                return await self._translate_openai(text, target_lang)
+        
+        # DeepL
         if provider == "deepl" and self.deepl_key:
             try:
                 return await self._translate_deepl(text, target_lang)
@@ -112,6 +120,31 @@ class TranslationService:
             raise ValueError("Translation provider returned no content.")
 
         return content.strip()
+
+    async def _translate_google(self, text: str, target_lang: str, source_lang: str | None = None) -> str:
+        """Translate using Google Cloud Translation API."""
+        try:
+            from google.cloud import translate_v2 as translate
+            
+            # Set credentials from environment
+            google_credentials = os.getenv("GOOGLE_CLOUD_CREDENTIALS", "")
+            if google_credentials:
+                os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = google_credentials
+            
+            translate_client = translate.Client()
+            
+            # Google Cloud accepts ISO 639-1 codes (e.g., 'en', 'el', 'fr')
+            result = translate_client.translate(
+                text,
+                target_language=target_lang,
+                source_language=source_lang if source_lang and source_lang != "auto" else None
+            )
+            
+            return result["translatedText"].strip()
+            
+        except Exception as e:
+            print(f"Google Cloud Translation error: {e}")
+            raise
 
 
 translation_service = TranslationService(

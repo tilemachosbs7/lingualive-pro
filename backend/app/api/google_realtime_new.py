@@ -85,9 +85,6 @@ async def google_transcription(websocket: WebSocket) -> None:
     audio_queue = queue.Queue()
     result_queue = queue.Queue()
     stop_event = threading.Event()
-    
-    # Store the main event loop for thread communication
-    main_loop = asyncio.get_running_loop()
 
     def audio_generator():
         """Generate audio chunks for Google Speech API."""
@@ -97,7 +94,7 @@ async def google_transcription(websocket: WebSocket) -> None:
                 audio_data = audio_queue.get(timeout=0.1)
                 if audio_data is None:  # Stop signal
                     break
-                yield speech.StreamingRecognizeRequest(audio_content=audio_data)
+                yield audio_data
             except queue.Empty:
                 continue
 
@@ -119,11 +116,17 @@ async def google_transcription(websocket: WebSocket) -> None:
                 interim_results=True,
             )
 
-            # Call streaming_recognize with config and audio generator
-            responses = client.streaming_recognize(
-                config=streaming_config,
-                requests=audio_generator()
-            )
+            # Create request generator
+            def request_generator():
+                # First request with config
+                yield speech.StreamingRecognizeRequest(streaming_config=streaming_config)
+                
+                # Then yield audio chunks
+                for audio_chunk in audio_generator():
+                    yield speech.StreamingRecognizeRequest(audio_content=audio_chunk)
+
+            # Call streaming_recognize with the generator
+            responses = client.streaming_recognize(requests=request_generator())
             
             for response in responses:
                 if stop_event.is_set():
@@ -183,13 +186,6 @@ async def google_transcription(websocket: WebSocket) -> None:
             "de": "de-DE", "es": "es-ES", "it": "it-IT", "pt": "pt-BR",
             "ja": "ja-JP", "zh": "zh-CN", "ko": "ko-KR", "ru": "ru-RU",
             "ar": "ar-SA", "hi": "hi-IN", "nl": "nl-NL", "pl": "pl-PL",
-            "tr": "tr-TR", "sv": "sv-SE", "da": "da-DK", "fi": "fi-FI",
-            "no": "nb-NO", "cs": "cs-CZ", "hu": "hu-HU", "ro": "ro-RO",
-            "sk": "sk-SK", "uk": "uk-UA", "bg": "bg-BG", "hr": "hr-HR",
-            "sl": "sl-SI", "et": "et-EE", "lv": "lv-LV", "lt": "lt-LT",
-            "vi": "vi-VN", "th": "th-TH", "id": "id-ID", "ms": "ms-MY",
-            "he": "iw-IL", "fa": "fa-IR", "ur": "ur-PK", "bn": "bn-BD",
-            "ta": "ta-IN", "te": "te-IN", "mr": "mr-IN", "gu": "gu-IN",
         }
         
         # Start speech recognition thread
