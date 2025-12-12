@@ -1,4 +1,13 @@
 import { loadHudState, saveHudState, HudTheme, HudPersistedState } from './hudState';
+import { 
+  LANGUAGES, 
+  STT_PROVIDERS, 
+  TRANSLATION_PROVIDERS,
+  getSTTProvidersForLanguage,
+  getTranslationProvidersForLanguage,
+  searchLanguages,
+  LanguageInfo 
+} from '../languageData';
 
 const HUD_ID = "lingualive-hud-root";
 const MIN_WIDTH = 260;
@@ -30,23 +39,14 @@ const FONT_CHOICES = [
   { value: "Montserrat, sans-serif", label: "Montserrat" }
 ];
 type HudMode = "idle" | "capturing" | "processing" | "translated" | "error";
+type TranslationProviderType = "deepl" | "openai" | "google";
 
-const LANGUAGE_CHOICES = [
-  { value: "auto", label: "Auto detect" },
-  { value: "en", label: "English" },
-  { value: "el", label: "Greek" },
-  { value: "es", label: "Spanish" },
-  { value: "fr", label: "French" },
-  { value: "de", label: "German" },
-  { value: "it", label: "Italian" },
-  { value: "pt", label: "Portuguese" },
-  { value: "ru", label: "Russian" },
-  { value: "zh", label: "Chinese" },
-  { value: "ja", label: "Japanese" },
-  { value: "ko", label: "Korean" },
-  { value: "ar", label: "Arabic" },
-  { value: "hi", label: "Hindi" }
-];
+// References to HUD select elements for smart filtering
+let sourceSelectRef: HTMLSelectElement | null = null;
+let targetSelectRef: HTMLSelectElement | null = null;
+let transcriptionSelectRef: HTMLSelectElement | null = null;
+let translationSelectRef: HTMLSelectElement | null = null;
+let selectedTranslationProvider: TranslationProviderType = "deepl";
 
 let hudState: HudPersistedState | null = null;
 let dragState: { active: boolean; offsetX: number; offsetY: number } = { active: false, offsetX: 0, offsetY: 0 };
@@ -527,40 +527,36 @@ async function createHud(): Promise<HTMLDivElement> {
   const settingsPanel = createSettingsPanel();
   settingsPanel.style.display = "none";
 
+  // ===== LANGUAGE & PROVIDER SELECTION ROW =====
   const languageRow = document.createElement("div");
   languageRow.style.display = "flex";
+  languageRow.style.flexWrap = "wrap";
   languageRow.style.alignItems = "center";
   languageRow.style.gap = "6px";
   languageRow.style.marginBottom = "8px";
 
   const fromLabel = document.createElement("span");
   fromLabel.textContent = "From";
-  fromLabel.style.fontSize = "0.9em";
+  fromLabel.style.fontSize = "0.85em";
   fromLabel.style.opacity = "0.8";
 
+  // Source language select with 90+ languages
   const sourceSelect = document.createElement("select");
+  sourceSelectRef = sourceSelect;
   styleSelect(sourceSelect);
-  LANGUAGE_CHOICES.forEach(opt => {
-    const o = document.createElement("option");
-    o.value = opt.value;
-    o.textContent = opt.label;
-    sourceSelect.appendChild(o);
-  });
+  populateLanguageSelect(sourceSelect, LANGUAGES, true);
   sourceSelect.value = hudState.sourceLang;
 
   const toLabel = document.createElement("span");
-  toLabel.textContent = "to";
-  toLabel.style.fontSize = "0.9em";
+  toLabel.textContent = "→";
+  toLabel.style.fontSize = "0.85em";
   toLabel.style.opacity = "0.8";
 
+  // Target language select with 90+ languages (no auto)
   const targetSelect = document.createElement("select");
+  targetSelectRef = targetSelect;
   styleSelect(targetSelect);
-  LANGUAGE_CHOICES.filter(opt => opt.value !== 'auto').forEach(opt => {
-    const o = document.createElement("option");
-    o.value = opt.value;
-    o.textContent = opt.label;
-    targetSelect.appendChild(o);
-  });
+  populateLanguageSelect(targetSelect, LANGUAGES.filter(l => l.code !== 'auto'), false);
   targetSelect.value = hudState.targetLang;
 
   languageRow.appendChild(fromLabel);
@@ -568,30 +564,27 @@ async function createHud(): Promise<HTMLDivElement> {
   languageRow.appendChild(toLabel);
   languageRow.appendChild(targetSelect);
 
-  // Add provider selectors to languageRow
-  const providerDivider = document.createElement("div");
-  providerDivider.style.width = "1px";
-  providerDivider.style.height = "24px";
-  providerDivider.style.background = "var(--lt-hud-border)";
-  providerDivider.style.margin = "0 6px";
-  languageRow.appendChild(providerDivider);
+  // Provider row (separate for better mobile layout)
+  const providerRow = document.createElement("div");
+  providerRow.style.display = "flex";
+  providerRow.style.alignItems = "center";
+  providerRow.style.gap = "6px";
+  providerRow.style.marginBottom = "8px";
 
   const transcriptionLabel = document.createElement("span");
-  transcriptionLabel.textContent = "🎙️";
-  transcriptionLabel.style.fontSize = "0.9em";
-  transcriptionLabel.title = "Transcription provider";
+  transcriptionLabel.textContent = "🎙️ STT:";
+  transcriptionLabel.style.fontSize = "0.85em";
+  transcriptionLabel.style.opacity = "0.8";
+  transcriptionLabel.title = "Speech-to-Text provider";
 
+  // STT provider select
   const transcriptionSelect = document.createElement("select");
+  transcriptionSelectRef = transcriptionSelect;
   styleSelect(transcriptionSelect);
-  const transcriptionOptions = [
-    { value: "deepgram", label: "Deepgram" },
-    { value: "openai", label: "OpenAI" },
-    { value: "google", label: "Google" },
-  ];
-  transcriptionOptions.forEach(opt => {
+  Object.entries(STT_PROVIDERS).forEach(([key, info]) => {
     const o = document.createElement("option");
-    o.value = opt.value;
-    o.textContent = opt.label;
+    o.value = key;
+    o.textContent = `${info.icon} ${info.name}`;
     transcriptionSelect.appendChild(o);
   });
   transcriptionSelect.value = selectedProvider;
@@ -601,27 +594,108 @@ async function createHud(): Promise<HTMLDivElement> {
   });
 
   const translationLabel = document.createElement("span");
-  translationLabel.textContent = "🧠";
-  translationLabel.style.fontSize = "0.9em";
+  translationLabel.textContent = "🧠 Trans:";
+  translationLabel.style.fontSize = "0.85em";
+  translationLabel.style.opacity = "0.8";
   translationLabel.title = "Translation provider";
 
+  // Translation provider select (now with Google!)
   const translationSelect = document.createElement("select");
+  translationSelectRef = translationSelect;
   styleSelect(translationSelect);
-  const translationOptions = [
-    { value: "deepl", label: "DeepL" },
-    { value: "openai", label: "OpenAI" },
-  ];
-  translationOptions.forEach(opt => {
+  Object.entries(TRANSLATION_PROVIDERS).forEach(([key, info]) => {
     const o = document.createElement("option");
-    o.value = opt.value;
-    o.textContent = opt.label;
+    o.value = key;
+    o.textContent = `${info.icon} ${info.name}`;
     translationSelect.appendChild(o);
   });
   
-  languageRow.appendChild(transcriptionLabel);
-  languageRow.appendChild(transcriptionSelect);
-  languageRow.appendChild(translationLabel);
-  languageRow.appendChild(translationSelect);
+  // Load saved translation provider
+  getTranslationProvider().then(provider => {
+    translationSelect.value = provider;
+    selectedTranslationProvider = provider as TranslationProviderType;
+  });
+  
+  translationSelect.addEventListener("change", async (e) => {
+    const provider = (e.target as HTMLSelectElement).value;
+    selectedTranslationProvider = provider as TranslationProviderType;
+    await setTranslationProvider(provider);
+  });
+
+  providerRow.appendChild(transcriptionLabel);
+  providerRow.appendChild(transcriptionSelect);
+  providerRow.appendChild(translationLabel);
+  providerRow.appendChild(translationSelect);
+
+  // Warning banner for provider compatibility
+  const providerWarning = document.createElement("div");
+  providerWarning.id = "lt-provider-warning";
+  providerWarning.style.display = "none";
+  providerWarning.style.padding = "4px 8px";
+  providerWarning.style.marginBottom = "6px";
+  providerWarning.style.borderRadius = "6px";
+  providerWarning.style.fontSize = "0.8em";
+  providerWarning.style.background = "rgba(251, 191, 36, 0.15)";
+  providerWarning.style.border = "1px solid rgba(251, 191, 36, 0.3)";
+  providerWarning.style.color = "#fbbf24";
+
+  // Function to update provider availability based on language
+  const updateProviderAvailability = () => {
+    const sourceLang = sourceSelect.value;
+    const targetLang = targetSelect.value;
+    
+    // Check STT provider availability
+    const availableSTT = getSTTProvidersForLanguage(sourceLang);
+    Array.from(transcriptionSelect.options).forEach(opt => {
+      const isAvailable = availableSTT.includes(opt.value);
+      opt.disabled = !isAvailable;
+      const info = STT_PROVIDERS[opt.value as keyof typeof STT_PROVIDERS];
+      opt.textContent = isAvailable 
+        ? `${info.icon} ${info.name}` 
+        : `${info.icon} ${info.name} ❌`;
+    });
+    
+    // Auto-switch STT if current not available
+    if (!availableSTT.includes(selectedProvider) && availableSTT.length > 0) {
+      selectedProvider = availableSTT[0] as TranscriptionProvider;
+      transcriptionSelect.value = selectedProvider;
+      setTranscriptionProvider(selectedProvider);
+    }
+    
+    // Check translation provider availability
+    const availableTrans = getTranslationProvidersForLanguage(targetLang);
+    Array.from(translationSelect.options).forEach(opt => {
+      const isAvailable = availableTrans.includes(opt.value);
+      opt.disabled = !isAvailable;
+      const info = TRANSLATION_PROVIDERS[opt.value as keyof typeof TRANSLATION_PROVIDERS];
+      opt.textContent = isAvailable 
+        ? `${info.icon} ${info.name}` 
+        : `${info.icon} ${info.name} ❌`;
+    });
+    
+    // Auto-switch translation if current not available  
+    if (!availableTrans.includes(selectedTranslationProvider) && availableTrans.length > 0) {
+      selectedTranslationProvider = availableTrans[0] as TranslationProviderType;
+      translationSelect.value = selectedTranslationProvider;
+      setTranslationProvider(selectedTranslationProvider);
+    }
+    
+    // Show warning if any provider not available
+    const sttOk = availableSTT.includes(selectedProvider);
+    const transOk = availableTrans.includes(selectedTranslationProvider);
+    if (!sttOk || !transOk) {
+      providerWarning.textContent = !sttOk 
+        ? `⚠️ ${STT_PROVIDERS[selectedProvider].name} doesn't support this source language`
+        : `⚠️ ${TRANSLATION_PROVIDERS[selectedTranslationProvider].name} doesn't support this target language`;
+      providerWarning.style.display = "block";
+    } else {
+      providerWarning.style.display = "none";
+    }
+  };
+  
+  // Add change listeners to update availability
+  sourceSelect.addEventListener("change", updateProviderAvailability);
+  targetSelect.addEventListener("change", updateProviderAvailability);
 
   const actionRow = document.createElement("div");
   actionRow.style.display = "flex";
@@ -761,6 +835,8 @@ async function createHud(): Promise<HTMLDivElement> {
 
   bodyContainer.appendChild(settingsPanel);
   bodyContainer.appendChild(languageRow);
+  bodyContainer.appendChild(providerRow);
+  bodyContainer.appendChild(providerWarning);
   bodyContainer.appendChild(actionRow);
   bodyContainer.appendChild(errorBanner);
   bodyContainer.appendChild(label);
@@ -775,6 +851,9 @@ async function createHud(): Promise<HTMLDivElement> {
   applyTheme(root);
   applyDisplayPrefs();
   enableDrag(root, header);
+  
+  // Initial provider availability check
+  updateProviderAvailability();
 
   settingsBtn.addEventListener("click", (e) => {
     e.stopPropagation();
@@ -855,6 +934,40 @@ function styleIconButton(btn: HTMLButtonElement): void {
   btn.style.transition = "opacity 0.15s";
   btn.addEventListener("mouseenter", () => (btn.style.opacity = "0.85"));
   btn.addEventListener("mouseleave", () => (btn.style.opacity = "1"));
+}
+
+// Helper to get language flag emoji
+function getLanguageFlag(code: string): string {
+  const flags: Record<string, string> = {
+    'auto': '🌐', 'en': '🇬🇧', 'el': '🇬🇷', 'es': '🇪🇸', 'fr': '🇫🇷',
+    'de': '🇩🇪', 'it': '🇮🇹', 'pt': '🇵🇹', 'ru': '🇷🇺', 'zh': '🇨🇳',
+    'ja': '🇯🇵', 'ko': '🇰🇷', 'ar': '🇸🇦', 'hi': '🇮🇳', 'nl': '🇳🇱',
+    'pl': '🇵🇱', 'tr': '🇹🇷', 'sv': '🇸🇪', 'da': '🇩🇰', 'no': '🇳🇴',
+    'fi': '🇫🇮', 'cs': '🇨🇿', 'hu': '🇭🇺', 'ro': '🇷🇴', 'bg': '🇧🇬',
+    'uk': '🇺🇦', 'vi': '🇻🇳', 'th': '🇹🇭', 'id': '🇮🇩', 'ms': '🇲🇾',
+    'he': '🇮🇱', 'fa': '🇮🇷', 'ur': '🇵🇰', 'bn': '🇧🇩', 'ta': '🇱🇰',
+  };
+  return flags[code] || '🌍';
+}
+
+// Populate language select dropdown
+function populateLanguageSelect(
+  select: HTMLSelectElement, 
+  languages: LanguageInfo[], 
+  includeAuto: boolean = false
+): void {
+  select.innerHTML = '';
+  
+  languages.forEach(lang => {
+    if (lang.code === 'auto' && !includeAuto) return;
+    
+    const option = document.createElement('option');
+    option.value = lang.code;
+    
+    const flag = getLanguageFlag(lang.code);
+    option.textContent = `${flag} ${lang.name}`;
+    select.appendChild(option);
+  });
 }
 
 function styleSelect(select: HTMLSelectElement): void {
