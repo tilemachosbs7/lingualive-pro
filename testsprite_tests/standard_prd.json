@@ -1,0 +1,79 @@
+{
+  "product_name": "LinguaLive v2",
+  "version": "0.1.0",
+  "description": "Chrome extension with FastAPI backend for real-time text translation",
+  "requirements": [
+    {
+      "requirement_id": "REQ-HUD-STATE",
+      "requirement_name": "HUD State Persistence",
+      "description": "HUD state (position, size, theme, minimized) should be persisted using chrome.storage.local",
+      "acceptance_criteria": [
+        "HUD position (top, left) is saved when moved",
+        "HUD size (width, height) is saved when resized",
+        "Theme preference is saved when changed",
+        "Minimized state is saved when toggled",
+        "All state is restored on page reload"
+      ]
+    },
+    {
+      "requirement_id": "REQ-HUD-DRAG",
+      "requirement_name": "HUD Drag and Drop",
+      "description": "Users should be able to reposition the HUD anywhere on the page",
+      "acceptance_criteria": [
+        "Clicking and dragging the header moves the HUD",
+        "HUD is clamped to stay at least partially visible",
+        "Position is saved on drag release",
+        "Drag operation is smooth with no jitter"
+      ]
+    },
+    {
+      "requirement_id": "REQ-HUD-RESIZE",
+      "requirement_name": "HUD Resize Handles",
+      "description": "Users should be able to resize the HUD to suit their needs",
+      "acceptance_criteria": [
+        "Resize handles visible on all 4 edges and corners",
+        "Dragging edges changes size in appropriate direction",
+        "Minimum size enforced (width: 260px, height: 120px)",
+        "Size is saved on resize complete",
+        "Cursor changes appropriately"
+      ]
+    },
+    {
+      "requirement_id": "REQ-HUD-CONTROLS",
+      "requirement_name": "HUD Minimize and Close Controls",
+      "description": "Users should be able to collapse or dismiss the HUD temporarily",
+      "acceptance_criteria": [
+        "Minimize button hides body content, leaves header visible",
+        "Clicking header restores full size",
+        "Close button hides entire HUD",
+        "Minimized state is persisted",
+        "Re-triggering translation shows HUD at last saved position"
+      ]
+    },
+    {
+      "requirement_id": "REQ-HUD-THEME",
+      "requirement_name": "Theme Switching with Icon",
+      "description": "Users should be able to switch between color themes",
+      "acceptance_criteria": [
+        "Theme icon (palette SVG) is available",
+        "Clicking cycles through themes: light → dark → blue",
+        "Each theme applies consistent colors",
+        "Theme choice persists across page reloads",
+        "Light: light background, dark text",
+        "Dark: dark background, light text",
+        "Blue: blue accent colors"
+      ]
+    },
+    {
+      "requirement_id": "REQ-HUD-ACCESSIBILITY",
+      "requirement_name": "Accessibility Features",
+      "description": "The HUD should be accessible to users with assistive technology",
+      "acceptance_criteria": [
+        "All buttons have aria-label attributes",
+        "Buttons are keyboard focusable (Tab key)",
+        "Enter/Space keys trigger button actions",
+        "Proper semantic HTML with button elements"
+      ]
+    }
+  ]
+}

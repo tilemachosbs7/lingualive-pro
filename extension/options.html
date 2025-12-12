@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>LinguaLive Options</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        margin: 0;
+        padding: 24px;
+        background: #0d1b2a;
+        color: #eef2f7;
+      }
+      h1 {
+        margin-top: 0;
+        font-size: 20px;
+      }
+      section {
+        background: #12263a;
+        border: 1px solid #1d3557;
+        border-radius: 12px;
+        padding: 16px;
+        margin-bottom: 16px;
+      }
+      label {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        font-size: 13px;
+      }
+      input,
+      textarea,
+      select {
+        padding: 10px 12px;
+        border-radius: 8px;
+        border: 1px solid #264c7d;
+        background: #0f2035;
+        color: #eef2f7;
+      }
+      button {
+        padding: 10px 12px;
+        border-radius: 8px;
+        border: none;
+        background: #4cc9f0;
+        color: #0b1320;
+        font-weight: 700;
+        cursor: pointer;
+      }
+      button:hover {
+        background: #72d9f6;
+      }
+      #llv2-translate-result {
+        margin-top: 10px;
+        padding: 10px;
+        background: #0f2035;
+        border-radius: 8px;
+        min-height: 40px;
+        border: 1px solid #1d3557;
+      }
+      #llv2-error {
+        color: #ffb4a2;
+        min-height: 18px;
+        font-size: 12px;
+        margin-top: 8px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>LinguaLive Options</h1>
+    <section>
+      <label>
+        Backend URL
+        <input id="backendUrl" type="url" placeholder="http://localhost:8000" />
+      </label>
+      <button id="save-backend">Save</button>
+      <div id="save-status" aria-live="polite"></div>
+    </section>
+
+    <section>
+      <h2>Text translation demo</h2>
+      <label>
+        Enter text
+        <textarea id="llv2-input-text" rows="4" placeholder="Πληκτρολόγησε κείμενο για μετάφραση"></textarea>
+      </label>
+      <label>
+        Target language
+        <select id="llv2-target-lang">
+          <option value="en">en</option>
+          <option value="el">el</option>
+        </select>
+      </label>
+      <button id="llv2-translate-btn">Μετάφραση</button>
+      <div id="llv2-error" aria-live="polite"></div>
+      <div id="llv2-translate-result" aria-live="polite"></div>
+    </section>
+
+    <section>
+      <h2>Speech settings</h2>
+      
+      <label>
+        Transcription provider
+        <select id="lt-transcription-provider">
+          <option value="deepgram">Deepgram (FASTEST - ~300ms)</option>
+          <option value="openai">OpenAI Realtime (~1-2s)</option>
+          <option value="google">Google Cloud (~500ms)</option>
+        </select>
+      </label>
+
+      <label style="margin-top: 12px;">
+        Translation provider (AI model)
+        <select id="lt-translation-provider">
+          <option value="deepl">DeepL (BEST quality)</option>
+          <option value="openai">OpenAI GPT (fallback)</option>
+        </select>
+      </label>
+      <details style="margin-top: 12px; padding: 12px; background: #0f2035; border-radius: 8px;">
+        <summary style="cursor: pointer; font-weight: 600;">📊 Provider Comparison</summary>
+        <table style="width: 100%; margin-top: 12px; border-collapse: collapse; font-size: 12px;">
+          <thead>
+            <tr style="border-bottom: 2px solid #264c7d;">
+              <th style="text-align: left; padding: 8px;">Provider</th>
+              <th style="text-align: center; padding: 8px;">Latency</th>
+              <th style="text-align: center; padding: 8px;">Quality</th>
+              <th style="text-align: center; padding: 8px;">Cost</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr style="border-bottom: 1px solid #1d3557; background: #1a3a52;">
+              <td style="padding: 8px;">🚀 Deepgram</td>
+              <td style="text-align: center; padding: 8px; color: #4cc9f0;"><b>~300ms</b></td>
+              <td style="text-align: center; padding: 8px;">Excellent</td>
+              <td style="text-align: center; padding: 8px;">Free ($200)</td>
+            </tr>
+            <tr style="border-bottom: 1px solid #1d3557;">
+              <td style="padding: 8px;">🧠 OpenAI</td>
+              <td style="text-align: center; padding: 8px; color: #ffb4a2;">~1-2s</td>
+              <td style="text-align: center; padding: 8px;">Good</td>
+              <td style="text-align: center; padding: 8px;">$$</td>
+            </tr>
+            <tr style="border-bottom: 1px solid #1d3557;">
+              <td style="padding: 8px;">☁️ Google</td>
+              <td style="text-align: center; padding: 8px; color: #90ee90;">~500ms</td>
+              <td style="text-align: center; padding: 8px;">Good</td>
+              <td style="text-align: center; padding: 8px;">60min free/mo</td>
+            </tr>
+          </tbody>
+        </table>
+      </details>
+      
+      <label style="margin-top: 16px;">
+        Speech language (source)
+        <select id="lt-speech-source">
+          <option value="auto">Auto detect</option>
+          <option value="en">English</option>
+          <option value="el">Greek</option>
+          <option value="es">Spanish</option>
+          <option value="fr">French</option>
+          <option value="de">German</option>
+          <option value="it">Italian</option>
+          <option value="pt">Portuguese</option>
+          <option value="ru">Russian</option>
+          <option value="zh">Chinese</option>
+          <option value="ja">Japanese</option>
+          <option value="ko">Korean</option>
+          <option value="ar">Arabic</option>
+          <option value="hi">Hindi</option>
+        </select>
+      </label>
+      <label>
+        Translate to (target)
+        <select id="lt-speech-target">
+          <option value="en">English</option>
+          <option value="el">Greek</option>
+          <option value="es">Spanish</option>
+          <option value="fr">French</option>
+          <option value="de">German</option>
+          <option value="it">Italian</option>
+          <option value="pt">Portuguese</option>
+          <option value="ru">Russian</option>
+          <option value="zh">Chinese</option>
+          <option value="ja">Japanese</option>
+          <option value="ko">Korean</option>
+          <option value="ar">Arabic</option>
+          <option value="hi">Hindi</option>
+        </select>
+      </label>
+    </section>
+
+    <script type="module" src="dist/options.js"></script>
+  </body>
+</html>

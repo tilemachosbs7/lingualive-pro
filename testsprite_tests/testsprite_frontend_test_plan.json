@@ -1,0 +1,109 @@
+[
+  {
+    "id": "TC-HUD-001",
+    "title": "Load persisted HUD position on page reload",
+    "description": "When HUD is moved and page is reloaded, HUD should appear at last saved position",
+    "steps": [
+      "1. Open extension popup and trigger demo translation",
+      "2. Drag HUD to a new position (e.g., top-left)",
+      "3. Note the position coordinates",
+      "4. Reload the page (F5)",
+      "5. Verify HUD appears at the same position"
+    ]
+  },
+  {
+    "id": "TC-HUD-002",
+    "title": "Load persisted HUD size on page reload",
+    "description": "When HUD is resized and page is reloaded, HUD should maintain last saved size",
+    "steps": [
+      "1. Open extension popup and trigger demo translation",
+      "2. Resize HUD from right edge to increase width",
+      "3. Resize HUD from bottom edge to increase height",
+      "4. Note the final dimensions",
+      "5. Reload the page (F5)",
+      "6. Verify HUD has the same dimensions"
+    ]
+  },
+  {
+    "id": "TC-HUD-010",
+    "title": "Drag HUD within viewport boundaries",
+    "description": "HUD should move smoothly when dragged from header",
+    "steps": [
+      "1. Open extension popup and trigger demo translation",
+      "2. Position mouse on HUD header (LinguaLive v2 text area)",
+      "3. Click and drag HUD to different position",
+      "4. Release mouse",
+      "5. Verify HUD moved to new position"
+    ]
+  },
+  {
+    "id": "TC-HUD-020",
+    "title": "Resize from right edge",
+    "description": "Dragging from right edge should change width",
+    "steps": [
+      "1. Open extension popup and trigger demo translation",
+      "2. Position mouse on right edge of HUD",
+      "3. Verify cursor changes to 'ew-resize'",
+      "4. Click and drag right",
+      "5. Verify width increases"
+    ]
+  },
+  {
+    "id": "TC-HUD-030",
+    "title": "Minimize HUD to header pill",
+    "description": "Clicking minimize button should hide body content",
+    "steps": [
+      "1. Open extension popup and trigger demo translation",
+      "2. Verify HUD shows full content (header + body)",
+      "3. Click the '−' (minimize) button in header",
+      "4. Verify body content is hidden",
+      "5. Verify header pill remains visible"
+    ]
+  },
+  {
+    "id": "TC-HUD-032",
+    "title": "Close HUD",
+    "description": "Clicking close button should hide the entire HUD",
+    "steps": [
+      "1. Open extension popup and trigger demo translation",
+      "2. Verify HUD is visible",
+      "3. Click the '×' (close) button in header",
+      "4. Verify HUD is hidden from page"
+    ]
+  },
+  {
+    "id": "TC-HUD-040",
+    "title": "Light theme rendering",
+    "description": "Clicking theme icon should cycle to light theme",
+    "steps": [
+      "1. Open extension popup and trigger demo translation",
+      "2. Click the palette icon (first button in header)",
+      "3. Verify HUD background becomes light colored",
+      "4. Verify HUD text becomes dark colored",
+      "5. Verify border color is light gray"
+    ]
+  },
+  {
+    "id": "TC-HUD-043",
+    "title": "Theme cycling loop",
+    "description": "Theme icon should cycle through all 3 themes in order",
+    "steps": [
+      "1. Click theme icon and note current theme",
+      "2. Click icon 4 times total",
+      "3. Verify theme cycles: light → dark → blue → light",
+      "4. Verify no additional themes beyond the 3"
+    ]
+  },
+  {
+    "id": "TC-HUD-050",
+    "title": "Header buttons have aria-labels",
+    "description": "All header buttons should have descriptive aria-labels",
+    "steps": [
+      "1. Open extension popup and trigger demo translation",
+      "2. Inspect HUD minimize button in DevTools",
+      "3. Verify aria-label='Minimize panel' exists",
+      "4. Inspect close button and verify aria-label='Close panel'",
+      "5. Inspect theme button and verify aria-label='Change theme'"
+    ]
+  }
+]

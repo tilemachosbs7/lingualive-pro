@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "LanguageTranslate",
+  "description": "Capture tab audio and translate in real-time.",
+  "version": "0.2.0",
+  "permissions": ["storage", "tabs", "activeTab"],
+  "host_permissions": ["<all_urls>"],
+  "background": {
+    "service_worker": "dist/background.js"
+  },
+  "action": {
+    "default_title": "LanguageTranslate",
+    "default_popup": "popup.html"
+  },
+  "options_page": "options.html",
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["dist/content/hud.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

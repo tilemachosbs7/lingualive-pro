@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="el">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>LanguageTranslate</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+      }
+      body {
+        width: 380px;
+        margin: 0;
+        padding: 16px;
+        font-family: "Inter", "Segoe UI", Arial, sans-serif;
+        transition: background 0.2s, color 0.2s;
+      }
+      .lt-popup {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        padding: 16px;
+        border-radius: 14px;
+        border: 1px solid var(--lt-border);
+        background: var(--lt-surface);
+        color: var(--lt-text);
+        box-shadow: 0 12px 30px rgba(0, 0, 0, 0.25);
+      }
+      .lt-heading {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .lt-title {
+        font-size: 18px;
+        font-weight: 700;
+        margin: 0;
+      }
+      .lt-subtitle {
+        margin: 0;
+        font-size: 13px;
+        color: var(--lt-text-subtle);
+      }
+      .lt-actions {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .lt-btn-primary,
+      .lt-btn-secondary {
+        flex: 1;
+        border: none;
+        border-radius: 10px;
+        padding: 10px 12px;
+        font-weight: 700;
+        cursor: pointer;
+        transition: transform 0.1s ease, box-shadow 0.2s;
+      }
+      .lt-btn-primary {
+        background: linear-gradient(135deg, #60a5fa, #2563eb);
+        color: #f8fafc;
+        box-shadow: 0 8px 18px rgba(37, 99, 235, 0.28);
+      }
+      .lt-btn-primary:hover {
+        transform: translateY(-1px);
+      }
+      .lt-btn-secondary {
+        background: transparent;
+        color: var(--lt-text);
+        border: 1px solid var(--lt-border);
+      }
+      .lt-note {
+        font-size: 12px;
+        color: var(--lt-text-subtle);
+        margin: 0;
+      }
+      .lt-status {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
+        border-radius: 8px;
+        background: var(--lt-status-bg);
+        font-size: 13px;
+        font-weight: 600;
+      }
+      .lt-status-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--lt-status-color);
+        animation: pulse 2s ease-in-out infinite;
+      }
+      @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.5; }
+      }
+      .lt-section {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .lt-section-title {
+        font-size: 12px;
+        font-weight: 700;
+        color: var(--lt-text-subtle);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        margin: 0;
+      }
+      .lt-select-group {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .lt-select-wrapper {
+        position: relative;
+      }
+      .lt-select {
+        width: 100%;
+        padding: 10px 12px;
+        border-radius: 8px;
+        border: 1px solid var(--lt-border);
+        background: var(--lt-surface);
+        color: var(--lt-text);
+        font-size: 14px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.2s;
+      }
+      .lt-select:hover {
+        border-color: #60a5fa;
+      }
+      .lt-tooltip {
+        font-size: 11px;
+        color: var(--lt-text-subtle);
+        padding-left: 4px;
+        line-height: 1.4;
+      }
+      .lt-divider {
+        height: 1px;
+        background: var(--lt-border);
+        margin: 4px 0;
+      }
+      .lt-popup-theme-light {
+        --lt-surface: #f8fafc;
+        --lt-text: #0f172a;
+        --lt-text-subtle: #475569;
+        --lt-border: #d9e0e9;
+        --lt-status-bg: #dbeafe;
+        --lt-status-color: #2563eb;
+      }
+      .lt-popup-theme-dark {
+        --lt-surface: #0b1220;
+        --lt-text: #e2e8f0;
+        --lt-text-subtle: #94a3b8;
+        --lt-border: #1f2937;
+        --lt-status-bg: #1e293b;
+        --lt-status-color: #60a5fa;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="lt-popup-root" class="lt-popup lt-popup-theme-light">
+      <div class="lt-heading">
+        <p class="lt-title">🎙️ LanguageTranslate</p>
+        <p class="lt-subtitle">Μετάφραση σε πραγματικό χρόνο</p>
+      </div>
+      
+      <div class="lt-status" id="lt-status">
+        <span class="lt-status-dot"></span>
+        <span id="lt-status-text">Έτοιμο</span>
+      </div>
+
+      <div class="lt-section">
+        <p class="lt-section-title">🎙️ Αναγνώριση φωνής</p>
+        <div class="lt-select-group">
+          <select id="lt-transcription-select" class="lt-select">
+            <option value="deepgram">Deepgram (Ταχύτερο - 300ms)</option>
+            <option value="google">Google Speech (Μέτριο - 500ms)</option>
+            <option value="openai">OpenAI (Πιο αργό - 1-2s)</option>
+          </select>
+          <p class="lt-tooltip" id="lt-transcription-tip">⚡ Deepgram: Καλύτερο για άμεσα αποτελέσματα</p>
+        </div>
+      </div>
+
+      <div class="lt-section">
+        <p class="lt-section-title">🧠 Μετάφραση</p>
+        <div class="lt-select-group">
+          <select id="lt-translation-select" class="lt-select">
+            <option value="deepl">DeepL (Καλύτερη ποιότητα)</option>
+            <option value="openai">OpenAI (Εναλλακτικό)</option>
+          </select>
+          <p class="lt-tooltip" id="lt-translation-tip">💎 DeepL: Ανώτερη ποιότητα για ευρωπαϊκές γλώσσες</p>
+        </div>
+      </div>
+
+      <div class="lt-divider"></div>
+      
+      <div class="lt-actions">
+        <button id="lt-start-btn" class="lt-btn-primary" type="button">▶️ Ενεργοποίηση HUD</button>
+      </div>
+      
+      <div class="lt-actions">
+        <button id="lt-settings-btn" class="lt-btn-secondary" type="button">⚙️ Ρυθμίσεις</button>
+      </div>
+      
+      <p class="lt-note">💡 Κάνε κλικ στο κουμπί για να ανοίξει το HUD στην τρέχουσα σελίδα</p>
+    </div>
+    <script type="module" src="dist/popup.js"></script>
+  </body>
+</html>
