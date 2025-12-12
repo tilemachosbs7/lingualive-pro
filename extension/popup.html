@@ -9,7 +9,7 @@
         color-scheme: light dark;
       }
       body {
-        width: 380px;
+        width: 420px;
         margin: 0;
         padding: 16px;
         font-family: "Inter", "Segoe UI", Arial, sans-serif;
@@ -113,8 +113,14 @@
         flex-direction: column;
         gap: 6px;
       }
+      .lt-select-row {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
       .lt-select-wrapper {
         position: relative;
+        flex: 1;
       }
       .lt-select {
         width: 100%;
@@ -131,11 +137,57 @@
       .lt-select:hover {
         border-color: #60a5fa;
       }
+      .lt-select:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
       .lt-tooltip {
         font-size: 11px;
         color: var(--lt-text-subtle);
         padding-left: 4px;
         line-height: 1.4;
+      }
+      .lt-provider-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 2px 8px;
+        border-radius: 12px;
+        font-size: 10px;
+        font-weight: 600;
+        background: var(--lt-badge-bg);
+        color: var(--lt-text-subtle);
+      }
+      .lt-search-wrapper {
+        position: relative;
+        margin-bottom: 6px;
+      }
+      .lt-search-input {
+        width: 100%;
+        padding: 8px 12px;
+        padding-left: 32px;
+        border-radius: 8px;
+        border: 1px solid var(--lt-border);
+        background: var(--lt-surface);
+        color: var(--lt-text);
+        font-size: 13px;
+        box-sizing: border-box;
+      }
+      .lt-search-input:focus {
+        outline: none;
+        border-color: #60a5fa;
+      }
+      .lt-search-icon {
+        position: absolute;
+        left: 10px;
+        top: 50%;
+        transform: translateY(-50%);
+        font-size: 14px;
+        opacity: 0.5;
+      }
+      .lt-lang-select {
+        max-height: 200px;
+        overflow-y: auto;
       }
       .lt-divider {
         height: 1px;
@@ -149,6 +201,7 @@
         --lt-border: #d9e0e9;
         --lt-status-bg: #dbeafe;
         --lt-status-color: #2563eb;
+        --lt-badge-bg: #e2e8f0;
       }
       .lt-popup-theme-dark {
         --lt-surface: #0b1220;
@@ -157,56 +210,103 @@
         --lt-border: #1f2937;
         --lt-status-bg: #1e293b;
         --lt-status-color: #60a5fa;
+        --lt-badge-bg: #1e293b;
+      }
+      .lt-warning {
+        background: #fef3c7;
+        color: #92400e;
+        padding: 8px 12px;
+        border-radius: 8px;
+        font-size: 12px;
+        display: none;
+      }
+      .lt-popup-theme-dark .lt-warning {
+        background: #78350f;
+        color: #fef3c7;
       }
     </style>
   </head>
   <body>
     <div id="lt-popup-root" class="lt-popup lt-popup-theme-light">
       <div class="lt-heading">
-        <p class="lt-title">🎙️ LanguageTranslate</p>
-        <p class="lt-subtitle">Μετάφραση σε πραγματικό χρόνο</p>
+        <p class="lt-title">🎙️ LinguaLive Pro</p>
+        <p class="lt-subtitle">Real-time Speech Translation</p>
       </div>
       
       <div class="lt-status" id="lt-status">
         <span class="lt-status-dot"></span>
-        <span id="lt-status-text">Έτοιμο</span>
+        <span id="lt-status-text">Ready</span>
       </div>
 
+      <!-- Source Language -->
       <div class="lt-section">
-        <p class="lt-section-title">🎙️ Αναγνώριση φωνής</p>
+        <p class="lt-section-title">🗣️ Source Language (Speech)</p>
+        <div class="lt-search-wrapper">
+          <span class="lt-search-icon">🔍</span>
+          <input type="text" id="lt-source-search" class="lt-search-input" placeholder="Search languages...">
+        </div>
+        <select id="lt-source-lang" class="lt-select lt-lang-select">
+          <option value="auto">🌐 Auto detect</option>
+        </select>
+      </div>
+
+      <!-- Target Language -->
+      <div class="lt-section">
+        <p class="lt-section-title">🎯 Target Language (Translation)</p>
+        <div class="lt-search-wrapper">
+          <span class="lt-search-icon">🔍</span>
+          <input type="text" id="lt-target-search" class="lt-search-input" placeholder="Search languages...">
+        </div>
+        <select id="lt-target-lang" class="lt-select lt-lang-select">
+          <option value="en">🇬🇧 English</option>
+        </select>
+      </div>
+
+      <div class="lt-divider"></div>
+
+      <!-- STT Provider -->
+      <div class="lt-section">
+        <p class="lt-section-title">🎙️ Speech Recognition</p>
         <div class="lt-select-group">
           <select id="lt-transcription-select" class="lt-select">
-            <option value="deepgram">Deepgram (Ταχύτερο - 300ms)</option>
-            <option value="google">Google Speech (Μέτριο - 500ms)</option>
-            <option value="openai">OpenAI (Πιο αργό - 1-2s)</option>
+            <option value="deepgram">⚡ Deepgram Nova-3 (Fastest ~300ms) - 31 languages</option>
+            <option value="openai">🤖 OpenAI Realtime (Quality ~1-2s) - 50 languages</option>
+            <option value="google">🔵 Google Cloud STT v2 (Most languages ~500ms) - 85+ languages</option>
           </select>
-          <p class="lt-tooltip" id="lt-transcription-tip">⚡ Deepgram: Καλύτερο για άμεσα αποτελέσματα</p>
+          <p class="lt-tooltip" id="lt-transcription-tip">⚡ Deepgram: Best for real-time streaming</p>
         </div>
+        <div class="lt-warning" id="lt-stt-warning">⚠️ Selected language not supported by this provider</div>
       </div>
 
+      <!-- Translation Provider -->
       <div class="lt-section">
-        <p class="lt-section-title">🧠 Μετάφραση</p>
+        <p class="lt-section-title">🌍 Translation Engine</p>
         <div class="lt-select-group">
           <select id="lt-translation-select" class="lt-select">
-            <option value="deepl">DeepL (Καλύτερη ποιότητα)</option>
-            <option value="openai">OpenAI (Εναλλακτικό)</option>
+            <option value="deepl">💎 DeepL (Best EU quality) - 33 languages</option>
+            <option value="google">🌍 Google Cloud (Widest coverage) - 189 languages</option>
+            <option value="openai">🤖 OpenAI GPT-4 (Quality) - 100+ languages</option>
           </select>
-          <p class="lt-tooltip" id="lt-translation-tip">💎 DeepL: Ανώτερη ποιότητα για ευρωπαϊκές γλώσσες</p>
+          <p class="lt-tooltip" id="lt-translation-tip">💎 DeepL: Superior quality for European languages</p>
         </div>
+        <div class="lt-warning" id="lt-translation-warning">⚠️ Selected language not supported by this provider</div>
       </div>
 
       <div class="lt-divider"></div>
       
       <div class="lt-actions">
-        <button id="lt-start-btn" class="lt-btn-primary" type="button">▶️ Ενεργοποίηση HUD</button>
+        <button id="lt-start-btn" class="lt-btn-primary" type="button">▶️ Start HUD</button>
       </div>
       
       <div class="lt-actions">
-        <button id="lt-settings-btn" class="lt-btn-secondary" type="button">⚙️ Ρυθμίσεις</button>
+        <button id="lt-settings-btn" class="lt-btn-secondary" type="button">⚙️ Settings</button>
       </div>
       
-      <p class="lt-note">💡 Κάνε κλικ στο κουμπί για να ανοίξει το HUD στην τρέχουσα σελίδα</p>
+      <p class="lt-note">💡 Press Alt+T on any page to toggle HUD</p>
     </div>
+    <script type="module" src="dist/popup.js"></script>
+  </body>
+</html>
     <script type="module" src="dist/popup.js"></script>
   </body>
 </html>
