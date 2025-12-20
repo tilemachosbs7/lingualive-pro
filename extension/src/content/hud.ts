@@ -72,11 +72,12 @@ let originalHistory: string[] = [];
 let translatedHistory: string[] = [];
 
 // Transcription providers
-type TranscriptionProvider = "deepgram" | "openai" | "google";
-const PROVIDERS: Record<TranscriptionProvider, { endpoint: string; name: string; latency: string; quality: string }> = {
-  deepgram: { endpoint: "ws://127.0.0.1:8000/api/deepgram", name: "Deepgram", latency: "~300ms", quality: "Excellent" },
-  openai: { endpoint: "ws://127.0.0.1:8000/api/realtime", name: "OpenAI Realtime", latency: "~1-2s", quality: "Good" },
-  google: { endpoint: "ws://127.0.0.1:8000/api/google-speech", name: "Google Cloud", latency: "~500ms", quality: "Good" },
+type TranscriptionProvider = "deepgram" | "openai" | "google" | "assemblyai";
+const PROVIDERS: Record<TranscriptionProvider, { endpoint: string; name: string; latency: string; quality: string; sampleRate: number }> = {
+  deepgram: { endpoint: "ws://127.0.0.1:8000/api/deepgram", name: "Deepgram", latency: "~300ms", quality: "Excellent", sampleRate: 24000 },
+  openai: { endpoint: "ws://127.0.0.1:8000/api/realtime", name: "OpenAI Realtime", latency: "~1-2s", quality: "Good", sampleRate: 24000 },
+  google: { endpoint: "ws://127.0.0.1:8000/api/google-speech", name: "Google Cloud", latency: "~500ms", quality: "Good", sampleRate: 24000 },
+  assemblyai: { endpoint: "ws://127.0.0.1:8000/api/assemblyai", name: "AssemblyAI", latency: "~400ms", quality: "High", sampleRate: 16000 },
 };
 
 let selectedProvider: TranscriptionProvider = "openai";
@@ -243,12 +244,15 @@ async function connectWebSocket(): Promise<void> {
 
     websocket.onopen = () => {
       console.log("WebSocket connected");
+      // Get provider-specific sample rate
+      const providerInfo = PROVIDERS[selectedProvider];
       // Send config
       websocket?.send(JSON.stringify({
         type: "config",
         sourceLang: hudState?.sourceLang ?? "auto",
         targetLang: hudState?.targetLang ?? "en",
         translationProvider: translationProvider,
+        sampleRate: providerInfo.sampleRate,
       }));
       resolve();
     };
@@ -354,15 +358,20 @@ async function connectWebSocket(): Promise<void> {
 }
 
 async function setupAudioPipeline(stream: MediaStream): Promise<void> {
-  // Create audio context
-  audioContext = new AudioContext({ sampleRate: 24000 }); // OpenAI expects 24kHz
+  // Get the correct sample rate for the selected provider
+  const providerInfo = PROVIDERS[selectedProvider];
+  const sampleRate = providerInfo.sampleRate;
+  
+  // Create audio context with provider-specific sample rate
+  audioContext = new AudioContext({ sampleRate });
   
   // Create source from stream
   const source = audioContext.createMediaStreamSource(stream);
   
   // Create script processor for raw audio access
   // Note: ScriptProcessorNode is deprecated but AudioWorklet requires more setup
-  const bufferSize = 4096;
+  // Buffer size adjusted based on sample rate for ~100-170ms chunks
+  const bufferSize = sampleRate === 16000 ? 2048 : 4096;
   const processor = audioContext.createScriptProcessor(bufferSize, 1, 1);
   
   processor.onaudioprocess = (event) => {
@@ -377,7 +386,7 @@ async function setupAudioPipeline(stream: MediaStream): Promise<void> {
       pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
     }
     
-    // Convert to base64 (for OpenAI/Google, which expect base64)
+    // Convert to base64 (for OpenAI/Google/AssemblyAI, which expect base64)
     const uint8 = new Uint8Array(pcm16.buffer);
     let binary = "";
     for (let i = 0; i < uint8.length; i++) {
@@ -647,7 +656,7 @@ async function createHud(): Promise<HTMLDivElement> {
     // Check STT provider availability
     const availableSTT = getSTTProvidersForLanguage(sourceLang);
     Array.from(transcriptionSelect.options).forEach(opt => {
-      const isAvailable = availableSTT.includes(opt.value);
+      const isAvailable = availableSTT.includes(opt.value as typeof availableSTT[number]);
       opt.disabled = !isAvailable;
       const info = STT_PROVIDERS[opt.value as keyof typeof STT_PROVIDERS];
       opt.textContent = isAvailable 
@@ -665,7 +674,7 @@ async function createHud(): Promise<HTMLDivElement> {
     // Check translation provider availability
     const availableTrans = getTranslationProvidersForLanguage(targetLang);
     Array.from(translationSelect.options).forEach(opt => {
-      const isAvailable = availableTrans.includes(opt.value);
+      const isAvailable = availableTrans.includes(opt.value as typeof availableTrans[number]);
       opt.disabled = !isAvailable;
       const info = TRANSLATION_PROVIDERS[opt.value as keyof typeof TRANSLATION_PROVIDERS];
       opt.textContent = isAvailable 

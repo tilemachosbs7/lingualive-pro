@@ -26,8 +26,10 @@ wheels/
 
 # Virtual environments
 venv/
+.venv/
 env/
 ENV/
+backend/.venv/
 
 # Node
 node_modules/
@@ -48,6 +50,10 @@ Thumbs.db
 
 # Credentials
 google-credentials.json
+backend/google-credentials.json
+
+# Test outputs
+testsprite_tests/tmp/
 backend/google-credentials.json
 
 # Build outputs

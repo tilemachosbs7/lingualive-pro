@@ -21,8 +21,9 @@
 
 ## 🌟 Βασικά Χαρακτηριστικά
 
-### ⚡ Real-Time Transcription (3 Providers)
+### ⚡ Real-Time Transcription (4 Providers)
 - **Deepgram**: ~300ms latency - Το ταχύτερο! (Συνιστώμενο)
+- **AssemblyAI**: ~400ms - High accuracy (en/es/fr/de/it/pt only)
 - **Google Speech-to-Text**: ~500ms - Δωρεάν 60 λεπτά/μήνα
 - **OpenAI Realtime API**: 1-2s - Fallback option
 
@@ -133,16 +134,29 @@
    ```
 
 3. **Set environment variables**:
+   
+   Copy the example files and add your API keys:
    ```bash
-   # Linux/Mac
-   export OPENAI_API_KEY=your_openai_api_key_here
-   export OPENAI_TRANSLATION_MODEL=gpt-4o-mini  # optional, defaults to gpt-4o-mini
-   export BACKEND_PORT=8000  # optional, defaults to 8000
-
-   # Windows PowerShell
-   $env:OPENAI_API_KEY="your_openai_api_key_here"
-   $env:OPENAI_TRANSLATION_MODEL="gpt-4o-mini"
-   $env:BACKEND_PORT="8000"
+   cp .env.example .env
+   cp backend/.env.example backend/.env
+   cp backend/google-credentials.example.json backend/google-credentials.json
+   ```
+   
+   Edit the `.env` files with your API keys:
+   ```env
+   # Required (at least one STT provider)
+   OPENAI_API_KEY=your-openai-api-key-here
+   
+   # Speech-to-Text Providers (pick one or more)
+   DEEPGRAM_API_KEY=your-deepgram-api-key-here      # Fastest, recommended
+   GOOGLE_CLOUD_CREDENTIALS=./google-credentials.json  # 60 min/month free
+   ASSEMBLYAI_API_KEY=your-assemblyai-api-key-here  # High accuracy
+   
+   # Translation Providers
+   DEEPL_API_KEY=your-deepl-api-key-here            # Best quality, recommended
+   
+   # Optional: AssemblyAI EU endpoint (GDPR compliant)
+   # ASSEMBLYAI_STREAMING_BASE_URL=wss://streaming.eu.assemblyai.com/v3/ws
    ```
 
 4. **Run the backend**:

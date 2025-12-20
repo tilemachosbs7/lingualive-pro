@@ -3,6 +3,7 @@
 // - Deepgram Nova-3: 31 languages
 // - Google Cloud Speech-to-Text v2: 85+ languages  
 // - OpenAI Realtime: ~50 languages
+// - AssemblyAI Streaming: 6 languages (en, es, fr, de, it, pt)
 // - DeepL: 33 languages
 // - Google Cloud Translation: 189 languages
 // - OpenAI GPT: 100+ languages
@@ -12,7 +13,7 @@ export interface LanguageInfo {
   name: string;
   nativeName: string;
   // Which STT providers support this language
-  sttProviders: ('deepgram' | 'openai' | 'google')[];
+  sttProviders: ('deepgram' | 'openai' | 'google' | 'assemblyai')[];
   // Which translation providers support this language
   translationProviders: ('deepl' | 'openai' | 'google')[];
 }
@@ -171,6 +172,16 @@ const OPENAI_TRANSLATE_LANGUAGES = new Set([
   ...GOOGLE_TRANSLATE_LANGUAGES, // All Google languages plus more
 ]);
 
+// AssemblyAI streaming supported languages (6 languages only)
+const ASSEMBLYAI_LANGUAGES = new Set([
+  'en', // English
+  'es', // Spanish
+  'fr', // French
+  'de', // German
+  'it', // Italian
+  'pt', // Portuguese
+]);
+
 // Complete language list with provider compatibility
 export const LANGUAGES: LanguageInfo[] = [
   { code: 'auto', name: 'Auto detect', nativeName: 'Auto', sttProviders: ['deepgram', 'openai', 'google'], translationProviders: [] },
@@ -188,17 +199,17 @@ export const LANGUAGES: LanguageInfo[] = [
   { code: 'cs', name: 'Czech', nativeName: 'Čeština', sttProviders: ['openai', 'google'], translationProviders: ['deepl', 'google', 'openai'] },
   { code: 'cy', name: 'Welsh', nativeName: 'Cymraeg', sttProviders: ['openai', 'google'], translationProviders: ['google', 'openai'] },
   { code: 'da', name: 'Danish', nativeName: 'Dansk', sttProviders: ['deepgram', 'openai', 'google'], translationProviders: ['deepl', 'google', 'openai'] },
-  { code: 'de', name: 'German', nativeName: 'Deutsch', sttProviders: ['deepgram', 'openai', 'google'], translationProviders: ['deepl', 'google', 'openai'] },
+  { code: 'de', name: 'German', nativeName: 'Deutsch', sttProviders: ['deepgram', 'openai', 'google', 'assemblyai'], translationProviders: ['deepl', 'google', 'openai'] },
   { code: 'el', name: 'Greek', nativeName: 'Ελληνικά', sttProviders: ['openai', 'google'], translationProviders: ['deepl', 'google', 'openai'] },
-  { code: 'en', name: 'English', nativeName: 'English', sttProviders: ['deepgram', 'openai', 'google'], translationProviders: ['deepl', 'google', 'openai'] },
+  { code: 'en', name: 'English', nativeName: 'English', sttProviders: ['deepgram', 'openai', 'google', 'assemblyai'], translationProviders: ['deepl', 'google', 'openai'] },
   { code: 'eo', name: 'Esperanto', nativeName: 'Esperanto', sttProviders: ['google'], translationProviders: ['google', 'openai'] },
-  { code: 'es', name: 'Spanish', nativeName: 'Español', sttProviders: ['deepgram', 'openai', 'google'], translationProviders: ['deepl', 'google', 'openai'] },
+  { code: 'es', name: 'Spanish', nativeName: 'Español', sttProviders: ['deepgram', 'openai', 'google', 'assemblyai'], translationProviders: ['deepl', 'google', 'openai'] },
   { code: 'et', name: 'Estonian', nativeName: 'Eesti', sttProviders: ['openai', 'google'], translationProviders: ['deepl', 'google', 'openai'] },
   { code: 'eu', name: 'Basque', nativeName: 'Euskara', sttProviders: ['google'], translationProviders: ['google', 'openai'] },
   { code: 'fa', name: 'Persian', nativeName: 'فارسی', sttProviders: ['openai', 'google'], translationProviders: ['google', 'openai'] },
   { code: 'fi', name: 'Finnish', nativeName: 'Suomi', sttProviders: ['openai', 'google'], translationProviders: ['deepl', 'google', 'openai'] },
   { code: 'fil', name: 'Filipino', nativeName: 'Filipino', sttProviders: ['google'], translationProviders: ['google', 'openai'] },
-  { code: 'fr', name: 'French', nativeName: 'Français', sttProviders: ['deepgram', 'openai', 'google'], translationProviders: ['deepl', 'google', 'openai'] },
+  { code: 'fr', name: 'French', nativeName: 'Français', sttProviders: ['deepgram', 'openai', 'google', 'assemblyai'], translationProviders: ['deepl', 'google', 'openai'] },
   { code: 'fy', name: 'Frisian', nativeName: 'Frysk', sttProviders: ['google'], translationProviders: ['google', 'openai'] },
   { code: 'ga', name: 'Irish', nativeName: 'Gaeilge', sttProviders: ['google'], translationProviders: ['google', 'openai'] },
   { code: 'gd', name: 'Scottish Gaelic', nativeName: 'Gàidhlig', sttProviders: ['google'], translationProviders: ['google', 'openai'] },
@@ -216,7 +227,7 @@ export const LANGUAGES: LanguageInfo[] = [
   { code: 'id', name: 'Indonesian', nativeName: 'Bahasa Indonesia', sttProviders: ['deepgram', 'openai', 'google'], translationProviders: ['deepl', 'google', 'openai'] },
   { code: 'ig', name: 'Igbo', nativeName: 'Igbo', sttProviders: ['google'], translationProviders: ['google', 'openai'] },
   { code: 'is', name: 'Icelandic', nativeName: 'Íslenska', sttProviders: ['openai', 'google'], translationProviders: ['google', 'openai'] },
-  { code: 'it', name: 'Italian', nativeName: 'Italiano', sttProviders: ['deepgram', 'openai', 'google'], translationProviders: ['deepl', 'google', 'openai'] },
+  { code: 'it', name: 'Italian', nativeName: 'Italiano', sttProviders: ['deepgram', 'openai', 'google', 'assemblyai'], translationProviders: ['deepl', 'google', 'openai'] },
   { code: 'ja', name: 'Japanese', nativeName: '日本語', sttProviders: ['deepgram', 'openai', 'google'], translationProviders: ['deepl', 'google', 'openai'] },
   { code: 'jw', name: 'Javanese', nativeName: 'Basa Jawa', sttProviders: ['google'], translationProviders: ['google', 'openai'] },
   { code: 'ka', name: 'Georgian', nativeName: 'ქართული', sttProviders: ['google'], translationProviders: ['google', 'openai'] },
@@ -248,7 +259,7 @@ export const LANGUAGES: LanguageInfo[] = [
   { code: 'pa', name: 'Punjabi', nativeName: 'ਪੰਜਾਬੀ', sttProviders: ['google'], translationProviders: ['google', 'openai'] },
   { code: 'pl', name: 'Polish', nativeName: 'Polski', sttProviders: ['deepgram', 'openai', 'google'], translationProviders: ['deepl', 'google', 'openai'] },
   { code: 'ps', name: 'Pashto', nativeName: 'پښتو', sttProviders: ['google'], translationProviders: ['google', 'openai'] },
-  { code: 'pt', name: 'Portuguese', nativeName: 'Português', sttProviders: ['deepgram', 'openai', 'google'], translationProviders: ['deepl', 'google', 'openai'] },
+  { code: 'pt', name: 'Portuguese', nativeName: 'Português', sttProviders: ['deepgram', 'openai', 'google', 'assemblyai'], translationProviders: ['deepl', 'google', 'openai'] },
   { code: 'ro', name: 'Romanian', nativeName: 'Română', sttProviders: ['openai', 'google'], translationProviders: ['deepl', 'google', 'openai'] },
   { code: 'ru', name: 'Russian', nativeName: 'Русский', sttProviders: ['deepgram', 'openai', 'google'], translationProviders: ['deepl', 'google', 'openai'] },
   { code: 'rw', name: 'Kinyarwanda', nativeName: 'Kinyarwanda', sttProviders: ['google'], translationProviders: ['google', 'openai'] },
@@ -308,6 +319,13 @@ export const STT_PROVIDERS = {
     languageCount: 85,
     icon: '🔵',
   },
+  assemblyai: {
+    id: 'assemblyai',
+    name: 'AssemblyAI',
+    description: 'High accuracy streaming',
+    languageCount: 6,
+    icon: '🎯',
+  },
 };
 
 export const TRANSLATION_PROVIDERS = {
@@ -347,8 +365,8 @@ export function getLanguagesForTranslationProvider(provider: 'deepl' | 'openai' 
   return LANGUAGES.filter(lang => lang.translationProviders.includes(provider));
 }
 
-export function getSTTProvidersForLanguage(langCode: string): ('deepgram' | 'openai' | 'google')[] {
-  if (langCode === 'auto') return ['deepgram', 'openai', 'google'];
+export function getSTTProvidersForLanguage(langCode: string): ('deepgram' | 'openai' | 'google' | 'assemblyai')[] {
+  if (langCode === 'auto') return ['deepgram', 'openai', 'google', 'assemblyai'];
   const lang = getLanguageByCode(langCode);
   return lang?.sttProviders || [];
 }

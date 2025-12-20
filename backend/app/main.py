@@ -9,6 +9,7 @@ from .api.translate import router as translate_router
 from .api.realtime import router as realtime_router
 from .api.deepgram_realtime import router as deepgram_router
 from .api.google_realtime import router as google_router
+from .api.assemblyai_realtime import router as assemblyai_router
 from .config import settings
 
 # Load .env file - check both possible locations
@@ -39,6 +40,7 @@ def create_app() -> FastAPI:
     app.include_router(realtime_router)
     app.include_router(deepgram_router)  # TRUE real-time streaming
     app.include_router(google_router)    # Google Cloud Speech-to-Text
+    app.include_router(assemblyai_router)  # AssemblyAI streaming STT
 
     @app.get("/health", tags=["health"])
     async def health() -> dict[str, str]:
