@@ -428,7 +428,7 @@ async def deepgram_transcription(websocket: WebSocket) -> None:
         return lang_map.get(lang.lower(), lang.lower())
 
     async def connect_to_deepgram(sample_rate: int = 16000) -> None:
-        """Connect to Deepgram with language hint and endpointing params."""
+        """Connect to Deepgram with language hint."""
         nonlocal deepgram_ws, listen_task
         
         params = [
@@ -438,9 +438,6 @@ async def deepgram_transcription(websocket: WebSocket) -> None:
             "channels=1",
             "punctuate=true",
             "interim_results=true",
-            # Endpointing params from config
-            f"utterance_end_ms={settings.deepgram_utterance_end_ms}",
-            f"vad_events={'true' if settings.deepgram_vad_events else 'false'}",
         ]
         
         # AAA: Add language hint if source language is known (major speed win!)
