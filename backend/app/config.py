@@ -48,6 +48,97 @@ class Settings(BaseSettings):
     # Smart partial handling
     min_words_for_translation: int = Field(3, alias="MIN_WORDS_FOR_TRANSLATION")  # Min words before translating
     max_cache_size: int = Field(500, alias="MAX_CACHE_SIZE")  # Max cached translations
+    
+    # === AAA STUDIO ENHANCEMENTS ===
+    
+    # Filler word removal
+    enable_filler_removal: bool = Field(True, alias="ENABLE_FILLER_REMOVAL")
+    
+    # Named entity preservation (DISABLED - causes placeholder artifacts)
+    enable_entity_preservation: bool = Field(False, alias="ENABLE_ENTITY_PRESERVATION")
+    
+    # Technical term preservation (DISABLED - causes placeholder artifacts)
+    enable_technical_preservation: bool = Field(False, alias="ENABLE_TECHNICAL_PRESERVATION")
+    
+    # Multi-language auto-detection
+    enable_language_detection: bool = Field(True, alias="ENABLE_LANGUAGE_DETECTION")
+    
+    # Provider fallback chain
+    enable_fallback_chain: bool = Field(True, alias="ENABLE_FALLBACK_CHAIN")
+    fallback_chain: str = Field("deepl,openai,google", alias="FALLBACK_CHAIN")  # Comma-separated
+    
+    # Circuit breaker
+    enable_circuit_breaker: bool = Field(True, alias="ENABLE_CIRCUIT_BREAKER")
+    circuit_breaker_threshold: int = Field(5, alias="CIRCUIT_BREAKER_THRESHOLD")  # Failures before unhealthy
+    circuit_breaker_cooldown_s: int = Field(30, alias="CIRCUIT_BREAKER_COOLDOWN_S")  # Seconds before retry
+    
+    # Dynamic rate limiting
+    enable_dynamic_rate_limit: bool = Field(True, alias="ENABLE_DYNAMIC_RATE_LIMIT")
+    base_rate_limit_ms: int = Field(100, alias="BASE_RATE_LIMIT_MS")
+    
+    # Quality scoring
+    enable_quality_scoring: bool = Field(True, alias="ENABLE_QUALITY_SCORING")
+    min_quality_score: float = Field(0.5, alias="MIN_QUALITY_SCORE")  # Warn if below
+    
+    # Metrics collection
+    enable_metrics: bool = Field(True, alias="ENABLE_METRICS")
+    
+    # Glossary support
+    enable_glossary: bool = Field(True, alias="ENABLE_GLOSSARY")
+    glossary_domain: str = Field("", alias="GLOSSARY_DOMAIN")  # Domain for glossary lookup
+    
+    # Response streaming (word by word)
+    enable_response_streaming: bool = Field(False, alias="ENABLE_RESPONSE_STREAMING")
+    
+    # Alternative translations
+    enable_alternatives: bool = Field(False, alias="ENABLE_ALTERNATIVES")
+    num_alternatives: int = Field(2, alias="NUM_ALTERNATIVES")
+    
+    # Confidence visualization
+    enable_confidence_display: bool = Field(True, alias="ENABLE_CONFIDENCE_DISPLAY")
+    
+    # === ADVANCED OPTIMIZATIONS ===
+    
+    # Translation Memory (TM) with fuzzy matching
+    enable_translation_memory: bool = Field(True, alias="ENABLE_TRANSLATION_MEMORY")
+    tm_fuzzy_threshold: float = Field(0.85, alias="TM_FUZZY_THRESHOLD")  # Minimum similarity for fuzzy match
+    tm_max_size: int = Field(10000, alias="TM_MAX_SIZE")  # Max TM entries
+    
+    # Context-Aware Translation
+    enable_context_aware: bool = Field(True, alias="ENABLE_CONTEXT_AWARE")
+    context_window_size: int = Field(3, alias="CONTEXT_WINDOW_SIZE")  # Number of previous sentences
+    
+    # Adaptive Confidence System
+    enable_adaptive_confidence: bool = Field(True, alias="ENABLE_ADAPTIVE_CONFIDENCE")
+    min_confidence_threshold: float = Field(0.3, alias="MIN_CONFIDENCE_THRESHOLD")  # Absolute minimum
+    
+    # Smart Punctuation Detection
+    enable_smart_punctuation: bool = Field(True, alias="ENABLE_SMART_PUNCTUATION")
+    pause_threshold_ms: int = Field(800, alias="PAUSE_THRESHOLD_MS")  # Pause = sentence end
+    
+    # Language Pair Profiles
+    enable_language_profiles: bool = Field(True, alias="ENABLE_LANGUAGE_PROFILES")
+    
+    # Predictive Pre-caching
+    enable_predictive_cache: bool = Field(True, alias="ENABLE_PREDICTIVE_CACHE")
+    
+    # === ADVANCED TRANSLATION REFINEMENTS ===
+    
+    # Back-Translation Validation
+    enable_back_translation: bool = Field(True, alias="ENABLE_BACK_TRANSLATION")
+    back_translation_threshold: float = Field(0.75, alias="BACK_TRANSLATION_THRESHOLD")
+    
+    # Hybrid Translation (consensus)
+    enable_hybrid_translation: bool = Field(False, alias="ENABLE_HYBRID_TRANSLATION")  # Expensive - use for critical content
+    
+    # Domain Detection & Adaptation
+    enable_domain_detection: bool = Field(True, alias="ENABLE_DOMAIN_DETECTION")
+    
+    # Sentence Complexity Analysis
+    enable_complexity_analysis: bool = Field(True, alias="ENABLE_COMPLEXITY_ANALYSIS")
+    
+    # User Correction Learning
+    enable_correction_learning: bool = Field(True, alias="ENABLE_CORRECTION_LEARNING")
 
 
 settings = Settings()

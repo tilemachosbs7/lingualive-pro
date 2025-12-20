@@ -17,6 +17,158 @@ const THEME_DEFAULTS: Record<HudTheme, { bg: string; color: string; border: stri
   dark: { bg: 'rgba(11, 19, 32, 0.94)', color: '#e2e8f0', border: '#1f2a44', btnBg: '#1f2a44' },
 };
 
+// ============================================================================
+// TOAST NOTIFICATION SYSTEM (5.5)
+// ============================================================================
+type ToastType = 'success' | 'error' | 'warning' | 'info';
+interface ToastOptions {
+  duration?: number;
+  position?: 'top' | 'bottom';
+}
+
+const toastQueue: HTMLDivElement[] = [];
+const TOAST_CONTAINER_ID = 'lingualive-toast-container';
+
+function createToastContainer(): HTMLDivElement {
+  let container = document.getElementById(TOAST_CONTAINER_ID) as HTMLDivElement;
+  if (!container) {
+    container = document.createElement('div');
+    container.id = TOAST_CONTAINER_ID;
+    container.style.cssText = `
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      z-index: 999999;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      pointer-events: none;
+    `;
+    document.body.appendChild(container);
+  }
+  return container;
+}
+
+function showToast(message: string, type: ToastType = 'info', options: ToastOptions = {}): void {
+  const { duration = 3000, position = 'top' } = options;
+  
+  const colors: Record<ToastType, { bg: string; border: string; icon: string }> = {
+    success: { bg: '#10b981', border: '#059669', icon: '✓' },
+    error: { bg: '#ef4444', border: '#dc2626', icon: '✕' },
+    warning: { bg: '#f59e0b', border: '#d97706', icon: '⚠' },
+    info: { bg: '#3b82f6', border: '#2563eb', icon: 'ℹ' },
+  };
+  
+  const container = createToastContainer();
+  container.style.top = position === 'top' ? '20px' : 'auto';
+  container.style.bottom = position === 'bottom' ? '20px' : 'auto';
+  
+  const toast = document.createElement('div');
+  toast.style.cssText = `
+    padding: 12px 20px 12px 16px;
+    background: ${colors[type].bg};
+    border-left: 4px solid ${colors[type].border};
+    border-radius: 6px;
+    color: white;
+    font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    transform: translateX(120%);
+    transition: transform 0.3s ease;
+    pointer-events: auto;
+    max-width: 350px;
+  `;
+  
+  const icon = document.createElement('span');
+  icon.textContent = colors[type].icon;
+  icon.style.cssText = `font-weight: bold; font-size: 16px;`;
+  
+  const text = document.createElement('span');
+  text.textContent = message;
+  
+  const closeBtn = document.createElement('button');
+  closeBtn.textContent = '×';
+  closeBtn.style.cssText = `
+    margin-left: auto;
+    background: none;
+    border: none;
+    color: white;
+    font-size: 18px;
+    cursor: pointer;
+    padding: 0 4px;
+    opacity: 0.7;
+  `;
+  closeBtn.onclick = () => removeToast(toast);
+  
+  toast.appendChild(icon);
+  toast.appendChild(text);
+  toast.appendChild(closeBtn);
+  container.appendChild(toast);
+  toastQueue.push(toast);
+  
+  // Animate in
+  requestAnimationFrame(() => {
+    toast.style.transform = 'translateX(0)';
+  });
+  
+  // Auto remove
+  setTimeout(() => removeToast(toast), duration);
+}
+
+function removeToast(toast: HTMLDivElement): void {
+  toast.style.transform = 'translateX(120%)';
+  setTimeout(() => {
+    toast.remove();
+    const idx = toastQueue.indexOf(toast);
+    if (idx > -1) toastQueue.splice(idx, 1);
+  }, 300);
+}
+
+// Helper functions for common toasts
+function showSuccessToast(msg: string): void { showToast(msg, 'success'); }
+function showErrorToast(msg: string): void { showToast(msg, 'error', { duration: 5000 }); }
+function showWarningToast(msg: string): void { showToast(msg, 'warning'); }
+function showInfoToast(msg: string): void { showToast(msg, 'info'); }
+
+// ============================================================================
+// CONFIDENCE VISUALIZATION (5.1)
+// ============================================================================
+interface ConfidenceInfo {
+  level: string;
+  color: string;
+  percentage: number;
+}
+
+function getConfidenceInfo(confidence: number): ConfidenceInfo {
+  if (confidence >= 0.9) return { level: 'high', color: '#22c55e', percentage: Math.round(confidence * 100) };
+  if (confidence >= 0.7) return { level: 'medium', color: '#eab308', percentage: Math.round(confidence * 100) };
+  if (confidence >= 0.5) return { level: 'low', color: '#f97316', percentage: Math.round(confidence * 100) };
+  return { level: 'very_low', color: '#ef4444', percentage: Math.round(confidence * 100) };
+}
+
+function createConfidenceIndicator(confidence: number): HTMLSpanElement {
+  const info = getConfidenceInfo(confidence);
+  const indicator = document.createElement('span');
+  indicator.style.cssText = `
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: ${info.color};
+    margin-left: 6px;
+    vertical-align: middle;
+  `;
+  indicator.title = `Confidence: ${info.percentage}%`;
+  return indicator;
+}
+
+// ============================================================================
+// HUD DEFAULTS AND CONFIGURATION
+// ============================================================================
+
 const DEFAULT_DISPLAY_PREFS = {
   fontSizePx: 18,
   textColor: '#ffffff',
@@ -263,6 +415,7 @@ async function connectWebSocket(): Promise<void> {
 
     websocket.onopen = async () => {
       console.log("WebSocket connected");
+      showSuccessToast(`Connected to ${provider.name}`);
       // Get provider-specific sample rate
       const providerInfo = PROVIDERS[selectedProvider];
       // Get quality mode setting
@@ -329,12 +482,26 @@ async function connectWebSocket(): Promise<void> {
             translatedHistory.push(translation);
             lastTranslatedText = translation;
             updateHudUI();
+            
+            // Show low confidence warning if applicable
+            if (data.confidence !== undefined && data.confidence < 0.5) {
+              showWarningToast(`Low confidence: ${Math.round(data.confidence * 100)}%`);
+            }
+          }
+        }
+        
+        // Quality score notification
+        else if (data.type === "quality_score") {
+          const score = data.score;
+          if (score !== undefined && score < 0.6) {
+            showWarningToast(`Translation quality: ${Math.round(score * 100)}%`);
           }
         }
         
         else if (data.type === "error") {
           console.error("WebSocket error:", data.message);
           lastErrorMessage = data.message;
+          showErrorToast(data.message);
           updateHudUI();
         }
       } catch (e) {
@@ -344,6 +511,7 @@ async function connectWebSocket(): Promise<void> {
 
     websocket.onerror = (error) => {
       console.error("WebSocket error:", error);
+      showErrorToast("Connection failed - check if backend is running");
       reject(new Error("WebSocket connection failed"));
     };
 
