@@ -113,7 +113,7 @@ class Settings(BaseSettings):
     
     # Adaptive Confidence System
     enable_adaptive_confidence: bool = Field(True, alias="ENABLE_ADAPTIVE_CONFIDENCE")
-    min_confidence_threshold: float = Field(0.3, alias="MIN_CONFIDENCE_THRESHOLD")  # Absolute minimum
+    adaptive_min_confidence: float = Field(0.3, alias="ADAPTIVE_MIN_CONFIDENCE")  # Absolute minimum for adaptive system
     
     # Smart Punctuation Detection
     enable_smart_punctuation: bool = Field(True, alias="ENABLE_SMART_PUNCTUATION")

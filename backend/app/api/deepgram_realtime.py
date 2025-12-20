@@ -103,8 +103,8 @@ async def deepgram_transcription(websocket: WebSocket) -> None:
     # Get API key at runtime
     deepgram_api_key = os.getenv("DEEPGRAM_API_KEY", "")
     
-    # Debug: Log API key info immediately
-    print(f"[{session_id}] DEEPGRAM_API_KEY len={len(deepgram_api_key)}, prefix={deepgram_api_key[:10] if deepgram_api_key else 'EMPTY'}...")
+    # Log API key status (without exposing the key)
+    logger.info(f"[{session_id}] DEEPGRAM_API_KEY present: {bool(deepgram_api_key)}")
     
     if not deepgram_api_key:
         await websocket.send_json({
@@ -427,17 +427,20 @@ async def deepgram_transcription(websocket: WebSocket) -> None:
         }
         return lang_map.get(lang.lower(), lang.lower())
 
-    async def connect_to_deepgram() -> None:
-        """Connect to Deepgram with language hint if available."""
+    async def connect_to_deepgram(sample_rate: int = 16000) -> None:
+        """Connect to Deepgram with language hint and endpointing params."""
         nonlocal deepgram_ws, listen_task
         
         params = [
             "model=nova-3",
             "encoding=linear16",
-            "sample_rate=16000",
+            f"sample_rate={sample_rate}",
             "channels=1",
             "punctuate=true",
             "interim_results=true",
+            # Endpointing params from config
+            f"utterance_end_ms={settings.deepgram_utterance_end_ms}",
+            f"vad_events={'true' if settings.deepgram_vad_events else 'false'}",
         ]
         
         # AAA: Add language hint if source language is known (major speed win!)
@@ -450,7 +453,7 @@ async def deepgram_transcription(websocket: WebSocket) -> None:
         
         url = f"{DEEPGRAM_URL}?{'&'.join(params)}"
         logger.info(f"[{session_id}] Deepgram URL: {url}")
-        logger.info(f"[{session_id}] API key prefix: {deepgram_api_key[:8]}...")
+        logger.info(f"[{session_id}] API key present: {bool(deepgram_api_key)}")
         
         deepgram_ws = await websockets.connect(
             url,
@@ -490,15 +493,17 @@ async def deepgram_transcription(websocket: WebSocket) -> None:
                             source_lang = data.get("sourceLang", None)
                             translation_provider = data.get("translationProvider", "deepl")
                             quality_mode = data.get("qualityMode", "fast")
+                            # Get sample rate from client (HUD sends audioContext.sampleRate)
+                            client_sample_rate = data.get("sampleRate", 16000)
                             logger.info(
                                 f"[{session_id}] Config: {source_lang} -> {target_lang}, "
-                                f"provider={translation_provider}, quality={quality_mode}"
+                                f"provider={translation_provider}, quality={quality_mode}, sampleRate={client_sample_rate}"
                             )
                             
-                            # AAA: Connect to Deepgram with language hint NOW
+                            # AAA: Connect to Deepgram with language hint and sample rate
                             if not config_received:
                                 config_received = True
-                                await connect_to_deepgram()
+                                await connect_to_deepgram(sample_rate=client_sample_rate)
                                 
                                 await safe_send({
                                     "type": "ready",
