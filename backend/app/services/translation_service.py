@@ -3,14 +3,13 @@ import httpx
 import logging
 import os
 import time
-from typing import Optional, List, Dict, Any, Tuple
+from typing import Optional, List
 from datetime import datetime, timedelta
 from collections import OrderedDict
 
 from ..config import settings
-from .enhancement_service import enhancement_service, TranslationMetrics
+from .enhancement_service import enhancement_service
 from .advanced_optimizations import optimization_controller
-from .advanced_translation_refinements import advanced_refinement_controller
 
 logger = logging.getLogger(__name__)
 

@@ -85,9 +85,6 @@ async def google_transcription(websocket: WebSocket) -> None:
     audio_queue = queue.Queue()
     result_queue = queue.Queue()
     stop_event = threading.Event()
-    
-    # Store the main event loop for thread communication
-    main_loop = asyncio.get_running_loop()
 
     def audio_generator():
         """Generate audio chunks for Google Speech API."""

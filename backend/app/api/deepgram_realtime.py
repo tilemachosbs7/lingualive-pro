@@ -22,7 +22,6 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from ..config import settings
 from ..services.translation_service import translation_service
-from ..services.enhancement_service import enhancement_service
 
 logger = logging.getLogger(__name__)
 

@@ -3,10 +3,8 @@ WebSocket endpoint for real-time audio transcription and translation.
 """
 
 import asyncio
-import base64
 import json
 import logging
-from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
@@ -102,7 +100,7 @@ async def realtime_transcription(websocket: WebSocket) -> None:
                     "type": "error",
                     "message": f"Failed to connect to OpenAI: {str(e)}"
                 })
-            except:
+            except Exception:
                 pass
             return
 
@@ -253,7 +251,7 @@ async def realtime_transcription(websocket: WebSocket) -> None:
                 logger.error(f"Error handling client message: {e}")
                 try:
                     await websocket.send_json({"type": "error", "message": str(e)})
-                except:
+                except Exception:
                     pass
                 break
 
@@ -264,7 +262,7 @@ async def realtime_transcription(websocket: WebSocket) -> None:
                 "type": "error",
                 "message": str(e),
             })
-        except:
+        except Exception:
             pass
 
     finally:

@@ -7,7 +7,7 @@ import asyncio
 import base64
 import json
 import logging
-from typing import AsyncGenerator, Callable
+from typing import Callable
 
 import websockets
 from websockets.client import WebSocketClientProtocol

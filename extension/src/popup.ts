@@ -28,13 +28,14 @@ const sttWarning = document.getElementById("lt-stt-warning") as HTMLDivElement |
 const translationWarning = document.getElementById("lt-translation-warning") as HTMLDivElement | null;
 
 type PopupHudTheme = 'light' | 'dark';
-type TranscriptionProvider = 'deepgram' | 'openai' | 'google';
+type TranscriptionProvider = 'deepgram' | 'openai' | 'google' | 'assemblyai';
 type TranslationProvider = 'deepl' | 'openai' | 'google';
 
 const TRANSCRIPTION_TIPS: Record<TranscriptionProvider, string> = {
   deepgram: "⚡ Deepgram Nova-3: Fastest streaming (~300ms), 31 languages",
   google: "🔵 Google Cloud: Most languages (85+), stable (~500ms)",
-  openai: "🤖 OpenAI Realtime: Quality mode (~1-2s), 50 languages"
+  openai: "🤖 OpenAI Realtime: Quality mode (~1-2s), 50 languages",
+  assemblyai: "🎯 AssemblyAI: High accuracy (~400ms), 6 languages"
 };
 
 const TRANSLATION_TIPS: Record<TranslationProvider, string> = {

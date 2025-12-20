@@ -372,7 +372,6 @@ async function beginCaptions(): Promise<void> {
       audio: true, // Request tab audio
       // @ts-expect-error - systemAudio is a newer API
       systemAudio: "include",
-      // @ts-expect-error - preferCurrentTab is Chrome-specific
       preferCurrentTab: false,
     });
 
@@ -1075,35 +1074,37 @@ function applyTheme(root: HTMLDivElement): void {
 
 function applyDisplayPrefs(): void {
   if (!hudState) return;
+  const prefs = hudState.displayPrefs;
+  const currentTheme = hudState.theme;
   const root = document.getElementById(HUD_ID) as HTMLDivElement | null;
   if (root) {
-    root.style.fontSize = `${hudState.displayPrefs.uiFontSizePx}px`;
+    root.style.fontSize = `${prefs.uiFontSizePx}px`;
   }
 
   const panels = [originalBox, translatedBox];
   panels.forEach((panel) => {
     if (panel) {
-      panel.style.fontSize = `${hudState.displayPrefs.fontSizePx}px`;
-      panel.style.color = hudState.displayPrefs.textColor;
-      panel.style.background = hudState.displayPrefs.backgroundColor;
-      panel.style.fontFamily = hudState.displayPrefs.fontFamily;
+      panel.style.fontSize = `${prefs.fontSizePx}px`;
+      panel.style.color = prefs.textColor;
+      panel.style.background = prefs.backgroundColor;
+      panel.style.fontFamily = prefs.fontFamily;
     }
   });
 
   const body = document.getElementById("lt-hud-body");
   if (body) {
-    (body as HTMLElement).style.fontFamily = hudState.displayPrefs.fontFamily;
+    (body as HTMLElement).style.fontFamily = prefs.fontFamily;
   }
 
   if (root) {
-    const bg = hudState.displayPrefs.panelBackgroundColor?.trim();
+    const bg = prefs.panelBackgroundColor?.trim();
     if (bg && bg.length > 0) {
       root.style.background = bg;
     } else {
-      root.style.background = THEME_DEFAULTS[hudState.theme].bg;
+      root.style.background = THEME_DEFAULTS[currentTheme].bg;
     }
-    root.style.borderColor = THEME_DEFAULTS[hudState.theme].border;
-    root.style.color = THEME_DEFAULTS[hudState.theme].color;
+    root.style.borderColor = THEME_DEFAULTS[currentTheme].border;
+    root.style.color = THEME_DEFAULTS[currentTheme].color;
   }
 }
 
@@ -1660,6 +1661,7 @@ function createSettingsPanel(): HTMLDivElement {
     const file = importFontInput.files?.[0];
     if (!file || !hudState) return;
 
+    const stateRef = hudState; // Capture reference for callbacks
     const reader = new FileReader();
     reader.onload = (e) => {
       const base64 = e.target?.result as string;
@@ -1690,18 +1692,18 @@ function createSettingsPanel(): HTMLDivElement {
       `;
 
       const fontFamily = `'${fontName}', sans-serif`;
-      hudState.displayPrefs.fontFamily = fontFamily;
+      stateRef.displayPrefs.fontFamily = fontFamily;
 
-      const isInCustom = hudState.customFonts.some(c => c.value === fontFamily);
+      const isInCustom = stateRef.customFonts.some(c => c.value === fontFamily);
       if (!isInCustom) {
-        hudState.customFonts.push({ name: fontName, value: fontFamily });
+        stateRef.customFonts.push({ name: fontName, value: fontFamily });
         rebuildFontSelect();
       }
 
       fontFamilySelect.value = fontFamily;
       customFontInput.value = fontFamily;
       applyDisplayPrefs();
-      saveHudState({ displayPrefs: hudState.displayPrefs, customFonts: hudState.customFonts });
+      saveHudState({ displayPrefs: stateRef.displayPrefs, customFonts: stateRef.customFonts });
       importFontInput.value = '';
     };
     reader.readAsDataURL(file);
