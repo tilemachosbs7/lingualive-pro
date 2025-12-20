@@ -223,6 +223,9 @@ let websocket: WebSocket | null = null;
 let originalHistory: string[] = [];
 let translatedHistory: string[] = [];
 
+// AAA: Single draft slot - fast pass updates this, refine finalizes to history
+let currentDraftTranslation: string | null = null;
+
 // Transcription providers
 type TranscriptionProvider = "deepgram" | "openai" | "google" | "assemblyai";
 const PROVIDERS: Record<TranscriptionProvider, { endpoint: string; name: string; latency: string; quality: string; sampleRate: number }> = {
@@ -338,8 +341,29 @@ function updateHudUI(): void {
     originalBox.scrollTop = originalBox.scrollHeight;
   }
   if (translatedBox) {
+    // AAA: Show history + draft (draft in lighter style)
     const historyText = translatedHistory.join(" ");
-    translatedBox.textContent = historyText || translatedPlaceholder;
+    
+    // If there's a draft, show it with different styling
+    if (currentDraftTranslation) {
+      // Create a temp container for styled content
+      translatedBox.innerHTML = "";
+      
+      if (historyText) {
+        const historySpan = document.createElement("span");
+        historySpan.textContent = historyText + " ";
+        translatedBox.appendChild(historySpan);
+      }
+      
+      // Draft in italics with slightly lower opacity
+      const draftSpan = document.createElement("span");
+      draftSpan.textContent = currentDraftTranslation;
+      draftSpan.style.fontStyle = "italic";
+      draftSpan.style.opacity = "0.75";
+      translatedBox.appendChild(draftSpan);
+    } else {
+      translatedBox.textContent = historyText || translatedPlaceholder;
+    }
     // Auto-scroll to bottom
     translatedBox.scrollTop = translatedBox.scrollHeight;
   }
@@ -360,9 +384,10 @@ async function beginCaptions(): Promise<void> {
   lastOriginalText = "";
   lastTranslatedText = "";
   lastErrorMessage = "";
-  // Clear history for new session
+  // Clear history and draft for new session
   originalHistory = [];
   translatedHistory = [];
+  currentDraftTranslation = null;  // AAA: Clear draft
   updateHudUI();
 
   try {
@@ -472,15 +497,30 @@ async function connectWebSocket(): Promise<void> {
           }
         }
         
-        // Translation ready (only use refine pass, skip fast pass previews)
+        // Translation ready - AAA Studio Single Draft Slot:
+        // Fast pass: Update draft (not history) for immediate feedback
+        // Refine pass: Finalize to history, clear draft
         else if (data.type === "translation") {
           const isRefine = data.is_refine === true;
           const translation = String(data.translation || "").trim();
-          // Only add final translations (refine pass), skip fast pass previews
-          if (translation && isRefine) {
-            translatedHistory.push(translation);
-            lastTranslatedText = translation;
-            updateHudUI();
+          
+          if (translation) {
+            if (isRefine) {
+              // REFINE PASS: Final quality translation
+              // Push to history (this is the final version)
+              if (lastTranslatedText !== translation) {
+                translatedHistory.push(translation);
+                lastTranslatedText = translation;
+              }
+              // Clear draft slot
+              currentDraftTranslation = null;
+              updateHudUI();
+            } else {
+              // FAST PASS: Update draft slot only (not history)
+              // This provides immediate feedback without filling history
+              currentDraftTranslation = translation;
+              updateHudUI();
+            }
             
             // Show low confidence warning if applicable
             if (data.confidence !== undefined && data.confidence < 0.5) {

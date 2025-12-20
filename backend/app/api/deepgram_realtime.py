@@ -123,6 +123,7 @@ async def deepgram_transcription(websocket: WebSocket) -> None:
     deepgram_ws = None
     listen_task = None
     ws_closed = False
+    config_received = False  # AAA: Wait for config before Deepgram connection
     
     # Latest-wins task management
     current_translate_task: Optional[asyncio.Task] = None
@@ -138,6 +139,7 @@ async def deepgram_transcription(websocket: WebSocket) -> None:
     session_start_time = time.perf_counter()
     total_translations = 0
     total_translation_time_ms = 0.0
+    stt_to_translate_times: list = []  # AAA: Track STT->translate latency
 
     async def safe_send(data: dict) -> bool:
         """Send JSON to client with error handling."""
@@ -154,14 +156,16 @@ async def deepgram_transcription(websocket: WebSocket) -> None:
     async def process_and_translate(
         text: str,
         is_refine_pass: bool = False,
+        confidence: float = 1.0,  # AAA: Pass confidence for adaptive syntax fix
     ) -> None:
         """Process text and translate with optional syntax fix.
         
         Args:
             text: Text to translate
             is_refine_pass: True for speech_final (full sentence), False for is_final (fast)
+            confidence: Deepgram confidence score (0-1)
         """
-        nonlocal ws_closed, total_translations, total_translation_time_ms
+        nonlocal ws_closed, total_translations, total_translation_time_ms, stt_to_translate_times
         if ws_closed:
             return
         
@@ -169,12 +173,21 @@ async def deepgram_transcription(websocket: WebSocket) -> None:
         processed_text = text
         
         try:
-            # Syntax fix only in quality mode AND if enabled AND this is refine pass
-            if (
+            # AAA: Adaptive Syntax Fix - only if:
+            # 1. Refine pass AND
+            # 2. Quality mode AND 
+            # 3. Syntax fix enabled AND
+            # 4. Confidence < adaptive threshold
+            adaptive_syntax_threshold = settings.adaptive_syntax_threshold
+            should_run_syntax_fix = (
                 is_refine_pass
                 and quality_mode == "quality"
                 and settings.enable_syntax_fix
-            ):
+                and confidence < adaptive_syntax_threshold
+            )
+            
+            if should_run_syntax_fix:
+                logger.debug(f"[{session_id}] Running syntax fix (confidence={confidence:.2f} < {adaptive_syntax_threshold})")
                 corrected = await check_and_fix_syntax(
                     text, 
                     timeout_ms=settings.syntax_fix_timeout_ms
@@ -187,6 +200,8 @@ async def deepgram_transcription(websocket: WebSocket) -> None:
                         "corrected": corrected,
                     })
                     processed_text = corrected
+            elif is_refine_pass and quality_mode == "quality" and settings.enable_syntax_fix:
+                logger.debug(f"[{session_id}] Skipping syntax fix (confidence={confidence:.2f} >= {adaptive_syntax_threshold})")
             
             # Check for cancellation before translation
             if asyncio.current_task().cancelled():
@@ -239,7 +254,7 @@ async def deepgram_transcription(websocket: WebSocket) -> None:
                 "message": f"Translation failed: {str(e)[:100]}",
             })
 
-    async def _schedule_now(text: str, is_refine: bool) -> None:
+    async def _schedule_now(text: str, is_refine: bool, confidence: float = 1.0) -> None:
         """Execute translation immediately with latest-wins cancellation."""
         nonlocal current_translate_task, last_translate_scheduled_at
         
@@ -254,12 +269,12 @@ async def deepgram_transcription(websocket: WebSocket) -> None:
                 except asyncio.CancelledError:
                     pass
             
-            # Create new task
+            # Create new task with confidence
             current_translate_task = asyncio.create_task(
-                process_and_translate(text, is_refine_pass=is_refine)
+                process_and_translate(text, is_refine_pass=is_refine, confidence=confidence)
             )
 
-    async def schedule_translation(text: str, is_refine: bool) -> None:
+    async def schedule_translation(text: str, is_refine: bool, confidence: float = 1.0) -> None:
         """Schedule translation with debounce for fast pass, immediate for refine.
         
         Also filters out partial translations if too short.
@@ -293,7 +308,7 @@ async def deepgram_transcription(websocket: WebSocket) -> None:
                 delay = max(0.0, min_interval - (time.perf_counter() - last_translate_scheduled_at))
                 if delay > 0:
                     await asyncio.sleep(delay)
-                await _schedule_now(text, is_refine=False)
+                await _schedule_now(text, is_refine=False, confidence=confidence)
             
             pending_fast_task = asyncio.create_task(delayed())
             return
@@ -302,7 +317,7 @@ async def deepgram_transcription(websocket: WebSocket) -> None:
         if pending_fast_task and not pending_fast_task.done():
             pending_fast_task.cancel()
         
-        await _schedule_now(text, is_refine=is_refine)
+        await _schedule_now(text, is_refine=is_refine, confidence=confidence)
 
     async def listen_to_deepgram() -> None:
         """Listen for Deepgram responses with two-pass translation and confidence filtering."""
@@ -360,7 +375,8 @@ async def deepgram_transcription(websocket: WebSocket) -> None:
                                             last_translated_text = current_sentence
                                             await schedule_translation(
                                                 current_sentence, 
-                                                is_refine=False
+                                                is_refine=False,
+                                                confidence=confidence  # AAA: Pass confidence
                                             )
                                     
                                     if speech_final:
@@ -373,10 +389,11 @@ async def deepgram_transcription(websocket: WebSocket) -> None:
                                             "text": final_text,
                                         })
                                         
-                                        # REFINE PASS: Full sentence translation
+                                        # REFINE PASS: Full sentence translation with confidence
                                         await schedule_translation(
                                             final_text, 
-                                            is_refine=True
+                                            is_refine=True,
+                                            confidence=confidence  # AAA: Pass confidence for adaptive syntax fix
                                         )
                                 else:
                                     # Interim result - show preview
@@ -392,24 +409,49 @@ async def deepgram_transcription(websocket: WebSocket) -> None:
             if not ws_closed:
                 logger.error(f"[{session_id}] Deepgram listener error: {e}")
 
-    try:
-        # Build Deepgram URL with MINIMAL parameters (to avoid 400 errors)
+    # === AAA: DEEPGRAM LANGUAGE HINT ===
+    def get_deepgram_language_code(lang: str) -> Optional[str]:
+        """Map source language to Deepgram language parameter."""
+        if not lang or lang == "auto":
+            return None
+        
+        # Deepgram language codes (Nova-2/Nova-3 supported)
+        lang_map = {
+            "en": "en", "en-US": "en-US", "en-GB": "en-GB",
+            "es": "es", "fr": "fr", "de": "de", "it": "it",
+            "pt": "pt", "pt-BR": "pt-BR", "nl": "nl",
+            "ja": "ja", "zh": "zh", "ko": "ko", "ru": "ru",
+            "pl": "pl", "tr": "tr", "uk": "uk", "el": "el",
+            "cs": "cs", "da": "da", "fi": "fi", "hi": "hi",
+            "id": "id", "no": "no", "sv": "sv", "th": "th", "vi": "vi",
+        }
+        return lang_map.get(lang.lower(), lang.lower())
+
+    async def connect_to_deepgram() -> None:
+        """Connect to Deepgram with language hint if available."""
+        nonlocal deepgram_ws, listen_task
+        
         params = [
             "model=nova-3",
             "encoding=linear16",
-            "sample_rate=16000",  # Must match AudioContext sample rate
+            "sample_rate=16000",
             "channels=1",
             "punctuate=true",
             "interim_results=true",
         ]
         
+        # AAA: Add language hint if source language is known (major speed win!)
+        dg_lang = get_deepgram_language_code(source_lang)
+        if dg_lang:
+            params.append(f"language={dg_lang}")
+            logger.info(f"[{session_id}] Using Deepgram language hint: {dg_lang}")
+        else:
+            logger.info(f"[{session_id}] No language hint - Deepgram will auto-detect")
+        
         url = f"{DEEPGRAM_URL}?{'&'.join(params)}"
-        
-        # Debug: Log URL and API key prefix
         logger.info(f"[{session_id}] Deepgram URL: {url}")
-        logger.info(f"[{session_id}] API key prefix: {deepgram_api_key[:8]}... (len={len(deepgram_api_key)})")
+        logger.info(f"[{session_id}] API key prefix: {deepgram_api_key[:8]}...")
         
-        # Connect with authorization header
         deepgram_ws = await websockets.connect(
             url,
             additional_headers={"Authorization": f"Token {deepgram_api_key}"},
@@ -418,16 +460,17 @@ async def deepgram_transcription(websocket: WebSocket) -> None:
         )
         
         logger.info(f"[{session_id}] Connected to Deepgram!")
-        
-        # Send ready message
-        await safe_send({
-            "type": "ready",
-            "message": "Deepgram transcription ready",
-            "session_id": session_id,  # Optional for client-side correlation
-        })
-        
-        # Start listener task
         listen_task = asyncio.create_task(listen_to_deepgram())
+
+    try:
+        # AAA: Wait for config before connecting to Deepgram (for language hint)
+        audio_buffer: list = []
+        
+        await safe_send({
+            "type": "waiting_config",
+            "message": "Waiting for language configuration...",
+            "session_id": session_id,
+        })
 
         # Handle client messages
         while True:
@@ -444,19 +487,43 @@ async def deepgram_transcription(websocket: WebSocket) -> None:
                         
                         if msg_type == "config":
                             target_lang = data.get("targetLang", "en")
-                            source_lang = data.get("sourceLang", None)  # Get source lang!
+                            source_lang = data.get("sourceLang", None)
                             translation_provider = data.get("translationProvider", "deepl")
                             quality_mode = data.get("qualityMode", "fast")
                             logger.info(
                                 f"[{session_id}] Config: {source_lang} -> {target_lang}, "
                                 f"provider={translation_provider}, quality={quality_mode}"
                             )
+                            
+                            # AAA: Connect to Deepgram with language hint NOW
+                            if not config_received:
+                                config_received = True
+                                await connect_to_deepgram()
+                                
+                                await safe_send({
+                                    "type": "ready",
+                                    "message": "Deepgram transcription ready",
+                                    "session_id": session_id,
+                                    "language_hint": get_deepgram_language_code(source_lang),
+                                })
+                                
+                                # Send buffered audio
+                                for buffered_audio in audio_buffer:
+                                    if deepgram_ws:
+                                        await deepgram_ws.send(buffered_audio)
+                                audio_buffer.clear()
                         
                         elif msg_type == "audio":
                             audio_b64 = data.get("data", "")
-                            if audio_b64 and deepgram_ws:
+                            if audio_b64:
                                 audio_bytes = base64.b64decode(audio_b64)
-                                await deepgram_ws.send(audio_bytes)
+                                if deepgram_ws:
+                                    await deepgram_ws.send(audio_bytes)
+                                else:
+                                    # Buffer audio until Deepgram connects
+                                    audio_buffer.append(audio_bytes)
+                                    if len(audio_buffer) > 100:
+                                        audio_buffer.pop(0)
                         
                         elif msg_type == "stop":
                             break
@@ -464,6 +531,10 @@ async def deepgram_transcription(websocket: WebSocket) -> None:
                     elif "bytes" in message:
                         if deepgram_ws:
                             await deepgram_ws.send(message["bytes"])
+                        else:
+                            audio_buffer.append(message["bytes"])
+                            if len(audio_buffer) > 100:
+                                audio_buffer.pop(0)
 
             except WebSocketDisconnect:
                 break

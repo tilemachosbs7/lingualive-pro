@@ -528,22 +528,53 @@ class TranslationService:
             "Content-Type": "application/json",
         }
         
-        response = await self._client.post(
-            self.deepl_endpoint,
-            headers=headers,
-            json=payload,
-        )
-        response.raise_for_status()
-        data = response.json()
+        # AAA: DeepL 429 Rate Limit Handling with Exponential Backoff
+        max_retries = settings.deepl_retry_count
+        base_delay_ms = settings.deepl_retry_delay_ms
         
-        translations = data.get("translations", [])
-        if translations:
-            result = translations[0].get("text", "").strip()
-            duration_ms = (time.perf_counter() - start_time) * 1000
-            logger.debug(f"DeepL translation took {duration_ms:.1f}ms (source={source_lang})")
-            return result
+        for attempt in range(max_retries + 1):
+            try:
+                response = await self._client.post(
+                    self.deepl_endpoint,
+                    headers=headers,
+                    json=payload,
+                )
+                
+                # Handle rate limiting (429)
+                if response.status_code == 429:
+                    if attempt < max_retries:
+                        # Exponential backoff: 250ms -> 500ms -> 1000ms
+                        delay_ms = base_delay_ms * (2 ** attempt)
+                        logger.warning(
+                            f"DeepL rate limited (429), retry {attempt + 1}/{max_retries} "
+                            f"in {delay_ms}ms"
+                        )
+                        await asyncio.sleep(delay_ms / 1000.0)
+                        continue
+                    else:
+                        raise Exception(f"DeepL rate limit exceeded after {max_retries} retries")
+                
+                response.raise_for_status()
+                data = response.json()
+                
+                translations = data.get("translations", [])
+                if translations:
+                    result = translations[0].get("text", "").strip()
+                    duration_ms = (time.perf_counter() - start_time) * 1000
+                    logger.debug(f"DeepL translation took {duration_ms:.1f}ms (source={source_lang})")
+                    return result
+                
+                raise ValueError("DeepL returned no translations")
+                
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 429 and attempt < max_retries:
+                    delay_ms = base_delay_ms * (2 ** attempt)
+                    logger.warning(f"DeepL 429, backoff {delay_ms}ms")
+                    await asyncio.sleep(delay_ms / 1000.0)
+                    continue
+                raise
         
-        raise ValueError("DeepL returned no translations")
+        raise Exception("DeepL translation failed after all retries")
 
     async def _translate_openai(self, text: str, target_lang: str) -> str:
         """Translate using OpenAI (fallback)."""

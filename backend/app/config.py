@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     enable_two_pass_translation: bool = Field(True, alias="ENABLE_TWO_PASS_TRANSLATION")
     translation_timeout_ms: int = Field(5000, alias="TRANSLATION_TIMEOUT_MS")
     syntax_fix_timeout_ms: int = Field(3000, alias="SYNTAX_FIX_TIMEOUT_MS")
-    translation_rate_limit_ms: int = Field(300, alias="TRANSLATION_RATE_LIMIT_MS")
+    translation_rate_limit_ms: int = Field(100, alias="TRANSLATION_RATE_LIMIT_MS")  # Reduced for faster response
     
     # DeepL specific
     deepl_glossary_id: str = Field("", alias="DEEPL_GLOSSARY_ID")
@@ -38,12 +38,15 @@ class Settings(BaseSettings):
     
     # Advanced DeepL optimization
     deepl_retry_count: int = Field(2, alias="DEEPL_RETRY_COUNT")  # Retry on failure
-    deepl_retry_delay_ms: int = Field(200, alias="DEEPL_RETRY_DELAY_MS")  # Delay between retries
+    deepl_retry_delay_ms: int = Field(250, alias="DEEPL_RETRY_DELAY_MS")  # Base delay for 429 backoff (250->500->1000ms)
     enable_context_aware_translation: bool = Field(True, alias="ENABLE_CONTEXT_AWARE_TRANSLATION")
     
     # Deepgram confidence filtering
     min_confidence_threshold: float = Field(0.7, alias="MIN_CONFIDENCE_THRESHOLD")  # Skip low-confidence results
     enable_confidence_filter: bool = Field(True, alias="ENABLE_CONFIDENCE_FILTER")
+    
+    # AAA: Adaptive syntax fix threshold (only run syntax fix if confidence < this)
+    adaptive_syntax_threshold: float = Field(0.85, alias="ADAPTIVE_SYNTAX_THRESHOLD")
     
     # Smart partial handling
     min_words_for_translation: int = Field(3, alias="MIN_WORDS_FOR_TRANSLATION")  # Min words before translating
