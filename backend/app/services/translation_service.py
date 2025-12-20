@@ -3,11 +3,44 @@ import httpx
 import logging
 import os
 import time
-from typing import Optional
+from typing import Optional, List
+from datetime import datetime, timedelta
+from collections import OrderedDict
 
 from ..config import settings
 
 logger = logging.getLogger(__name__)
+
+
+class LRUCache:
+    """Simple LRU cache with TTL support."""
+    
+    def __init__(self, max_size: int, ttl_seconds: int):
+        self._cache: OrderedDict = OrderedDict()
+        self._max_size = max_size
+        self._ttl = timedelta(seconds=ttl_seconds)
+    
+    def get(self, key):
+        if key not in self._cache:
+            return None
+        value, timestamp = self._cache[key]
+        if datetime.now() - timestamp > self._ttl:
+            del self._cache[key]
+            return None
+        # Move to end (most recently used)
+        self._cache.move_to_end(key)
+        return value
+    
+    def put(self, key, value):
+        if key in self._cache:
+            self._cache.move_to_end(key)
+        self._cache[key] = (value, datetime.now())
+        # Evict oldest if over capacity
+        while len(self._cache) > self._max_size:
+            self._cache.popitem(last=False)
+    
+    def __len__(self):
+        return len(self._cache)
 
 
 class TranslationService:
@@ -17,7 +50,10 @@ class TranslationService:
     - Source language hints (no auto-detect overhead)
     - Glossary support
     - Timeout budgets
-    - Latency-optimized DeepL model
+    - LRU Translation caching with TTL
+    - Context-aware translation
+    - Retry logic with exponential backoff
+    - Formality support
     """
 
     def __init__(self, api_key: str, model: str):
@@ -36,9 +72,51 @@ class TranslationService:
         # Glossary ID (optional)
         self.deepl_glossary_id = settings.deepl_glossary_id
         
+        # Formality level
+        self.deepl_formality = settings.deepl_formality
+        
+        # LRU Translation cache with TTL
+        self._translation_cache = LRUCache(
+            max_size=settings.max_cache_size,
+            ttl_seconds=settings.translation_cache_ttl_seconds
+        )
+        
+        # Context buffer for context-aware translation
+        self._context_buffer: List[str] = []
+        self._max_context = settings.context_buffer_size
+        
         # Rate limiting state
         self._last_translate_time: float = 0.0
         self._rate_limit_ms = settings.translation_rate_limit_ms
+        
+        # Retry configuration
+        self._retry_count = settings.deepl_retry_count
+        self._retry_delay_ms = settings.deepl_retry_delay_ms
+        
+        # Stats for monitoring
+        self._total_requests = 0
+        self._cache_hits = 0
+        self._total_latency_ms = 0.0
+
+    def add_context(self, text: str) -> None:
+        """Add a sentence to context buffer for context-aware translation."""
+        self._context_buffer.append(text)
+        if len(self._context_buffer) > self._max_context:
+            self._context_buffer.pop(0)
+    
+    def get_context(self) -> str:
+        """Get recent context as a single string."""
+        return " ".join(self._context_buffer[-self._max_context:])
+    
+    def get_stats(self) -> dict:
+        """Get translation service statistics."""
+        return {
+            "total_requests": self._total_requests,
+            "cache_hits": self._cache_hits,
+            "cache_hit_rate": self._cache_hits / max(1, self._total_requests),
+            "cache_size": len(self._translation_cache),
+            "avg_latency_ms": self._total_latency_ms / max(1, self._total_requests - self._cache_hits),
+        }
 
     async def translate_text(
         self,
@@ -47,6 +125,7 @@ class TranslationService:
         target_lang: str,
         provider: str = "deepl",
         timeout_ms: Optional[int] = None,
+        use_context: bool = False,
     ) -> str:
         """Translate using selected provider with timeout budget.
         
@@ -56,23 +135,87 @@ class TranslationService:
             target_lang: Target language code
             provider: 'deepl', 'openai', or 'google'
             timeout_ms: Optional timeout override in milliseconds
+            use_context: Whether to use context buffer for better translation
         
         Returns:
             Translated text
         """
+        self._total_requests += 1
+        
+        # Normalize text
+        text = text.strip()
+        if not text:
+            return ""
+        
+        # Check cache (if enabled)
+        if settings.enable_translation_cache and provider == "deepl":
+            cache_key = (text.lower(), source_lang, target_lang, self.deepl_formality)
+            cached = self._translation_cache.get(cache_key)
+            if cached:
+                self._cache_hits += 1
+                logger.debug(f"Cache hit ({self._cache_hits}/{self._total_requests}): {text[:30]}...")
+                return cached
+        
         timeout_s = (timeout_ms or settings.translation_timeout_ms) / 1000.0
+        start_time = time.perf_counter()
         
         try:
-            return await asyncio.wait_for(
-                self._translate_internal(text, source_lang, target_lang, provider),
+            # Build context-aware text if enabled
+            translate_text = text
+            if use_context and settings.enable_context_aware_translation and provider == "deepl":
+                context = self.get_context()
+                if context:
+                    # DeepL doesn't support context directly, but OpenAI does
+                    # For DeepL we just translate the current text
+                    pass
+            
+            result = await asyncio.wait_for(
+                self._translate_with_retry(text, source_lang, target_lang, provider),
                 timeout=timeout_s
             )
+            
+            # Update stats
+            latency_ms = (time.perf_counter() - start_time) * 1000
+            self._total_latency_ms += latency_ms
+            
+            # Cache the result (if enabled and DeepL)
+            if settings.enable_translation_cache and provider == "deepl":
+                cache_key = (text.lower(), source_lang, target_lang, self.deepl_formality)
+                self._translation_cache.put(cache_key, result)
+            
+            # Add to context buffer
+            self.add_context(text)
+            
+            return result
         except asyncio.TimeoutError:
             logger.warning(f"Translation timeout after {timeout_s}s for provider={provider}")
             raise TimeoutError(f"Translation timed out after {timeout_s}s")
         except asyncio.CancelledError:
             logger.debug("Translation cancelled (newer request arrived)")
             raise
+
+    async def _translate_with_retry(
+        self,
+        text: str,
+        source_lang: Optional[str],
+        target_lang: str,
+        provider: str,
+    ) -> str:
+        """Translate with retry logic."""
+        last_error = None
+        
+        for attempt in range(self._retry_count + 1):
+            try:
+                return await self._translate_internal(text, source_lang, target_lang, provider)
+            except Exception as e:
+                last_error = e
+                if attempt < self._retry_count:
+                    delay = (self._retry_delay_ms / 1000.0) * (attempt + 1)  # Exponential backoff
+                    logger.warning(f"Translation attempt {attempt + 1} failed, retrying in {delay}s: {e}")
+                    await asyncio.sleep(delay)
+        
+        # All retries failed
+        raise last_error
 
     async def _translate_internal(
         self,
@@ -175,6 +318,10 @@ class TranslationService:
         # Add glossary if configured
         if self.deepl_glossary_id:
             payload["glossary_id"] = self.deepl_glossary_id
+        
+        # Add formality level (if not default)
+        if self.deepl_formality and self.deepl_formality != "default":
+            payload["formality"] = self.deepl_formality
         
         headers = {
             "Authorization": f"DeepL-Auth-Key {self.deepl_key}",

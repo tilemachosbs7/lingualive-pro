@@ -115,6 +115,14 @@
           <option value="openai">OpenAI GPT (fallback)</option>
         </select>
       </label>
+
+      <label style="margin-top: 12px;">
+        Quality mode
+        <select id="lt-quality-mode">
+          <option value="fast">Fast (lower latency)</option>
+          <option value="quality">Quality (syntax fix via GPT)</option>
+        </select>
+      </label>
       <details style="margin-top: 12px; padding: 12px; background: #0f2035; border-radius: 8px;">
         <summary style="cursor: pointer; font-weight: 600;">📊 Provider Comparison</summary>
         <table style="width: 100%; margin-top: 12px; border-collapse: collapse; font-size: 12px;">

@@ -103,6 +103,9 @@ async def deepgram_transcription(websocket: WebSocket) -> None:
     # Get API key at runtime
     deepgram_api_key = os.getenv("DEEPGRAM_API_KEY", "")
     
+    # Debug: Log API key info immediately
+    print(f"[{session_id}] DEEPGRAM_API_KEY len={len(deepgram_api_key)}, prefix={deepgram_api_key[:10] if deepgram_api_key else 'EMPTY'}...")
+    
     if not deepgram_api_key:
         await websocket.send_json({
             "type": "error",
@@ -124,6 +127,12 @@ async def deepgram_transcription(websocket: WebSocket) -> None:
     # Latest-wins task management
     current_translate_task: Optional[asyncio.Task] = None
     translate_task_lock = asyncio.Lock()
+    pending_fast_task: Optional[asyncio.Task] = None
+    last_translate_scheduled_at = 0.0
+    
+    # Context window for better translations
+    context_buffer: list = []  # Keep recent sentences
+    max_context = settings.context_buffer_size
     
     # Timing metrics
     session_start_time = time.perf_counter()
@@ -230,9 +239,11 @@ async def deepgram_transcription(websocket: WebSocket) -> None:
                 "message": f"Translation failed: {str(e)[:100]}",
             })
 
-    async def schedule_translation(text: str, is_refine: bool) -> None:
-        """Schedule translation with latest-wins cancellation."""
-        nonlocal current_translate_task
+    async def _schedule_now(text: str, is_refine: bool) -> None:
+        """Execute translation immediately with latest-wins cancellation."""
+        nonlocal current_translate_task, last_translate_scheduled_at
+        
+        last_translate_scheduled_at = time.perf_counter()
         
         async with translate_task_lock:
             # Cancel previous task if still running (latest wins)
@@ -248,11 +259,57 @@ async def deepgram_transcription(websocket: WebSocket) -> None:
                 process_and_translate(text, is_refine_pass=is_refine)
             )
 
+    async def schedule_translation(text: str, is_refine: bool) -> None:
+        """Schedule translation with debounce for fast pass, immediate for refine.
+        
+        Also filters out partial translations if too short.
+        """
+        nonlocal pending_fast_task, context_buffer
+        
+        # Filter: Skip partials that are too short
+        if not is_refine and len(text.strip()) < settings.min_partial_chars:
+            logger.debug(f"[{session_id}] Skipping short partial ({len(text)} chars)")
+            return
+        
+        # Add to context buffer if refine (final sentence)
+        if is_refine:
+            context_buffer.append(text)
+            if len(context_buffer) > max_context:
+                context_buffer.pop(0)
+        
+        min_interval = settings.translation_rate_limit_ms / 1000.0
+        
+        # Debounce FAST pass only (refine must always run immediately)
+        if not is_refine and min_interval > 0:
+            # Cancel any pending fast task
+            if pending_fast_task and not pending_fast_task.done():
+                pending_fast_task.cancel()
+                try:
+                    await pending_fast_task
+                except asyncio.CancelledError:
+                    pass
+            
+            async def delayed() -> None:
+                delay = max(0.0, min_interval - (time.perf_counter() - last_translate_scheduled_at))
+                if delay > 0:
+                    await asyncio.sleep(delay)
+                await _schedule_now(text, is_refine=False)
+            
+            pending_fast_task = asyncio.create_task(delayed())
+            return
+        
+        # If refine arrives, cancel any pending fast preview (refine is better)
+        if pending_fast_task and not pending_fast_task.done():
+            pending_fast_task.cancel()
+        
+        await _schedule_now(text, is_refine=is_refine)
+
     async def listen_to_deepgram() -> None:
-        """Listen for Deepgram responses with two-pass translation."""
+        """Listen for Deepgram responses with two-pass translation and confidence filtering."""
         nonlocal current_sentence, ws_closed
         
         accumulated_text = ""  # Text since last speech_final
+        last_translated_text = ""  # Avoid re-translating same text
         
         try:
             async for message in deepgram_ws:
@@ -266,9 +323,17 @@ async def deepgram_transcription(websocket: WebSocket) -> None:
                         alternatives = channel.get("alternatives", [])
                         
                         if alternatives:
-                            transcript = alternatives[0].get("transcript", "")
+                            alt = alternatives[0]
+                            transcript = alt.get("transcript", "")
+                            confidence = alt.get("confidence", 1.0)
                             is_final = data.get("is_final", False)
                             speech_final = data.get("speech_final", False)
+                            
+                            # === CONFIDENCE FILTERING ===
+                            if settings.enable_confidence_filter:
+                                if confidence < settings.min_confidence_threshold:
+                                    logger.debug(f"[{session_id}] Skipping low confidence result ({confidence:.2f}): {transcript[:30]}")
+                                    continue
                             
                             if transcript:
                                 if is_final:
@@ -285,8 +350,14 @@ async def deepgram_transcription(websocket: WebSocket) -> None:
                                     # === TWO-PASS TRANSLATION ===
                                     if settings.enable_two_pass_translation:
                                         # FAST PASS: Translate immediately on is_final
-                                        # This gives user quick feedback
-                                        if not speech_final and len(current_sentence) > 5:
+                                        # Only if text changed significantly AND has enough words
+                                        word_count = len(current_sentence.split())
+                                        if (
+                                            not speech_final 
+                                            and word_count >= settings.min_words_for_translation
+                                            and current_sentence != last_translated_text
+                                        ):
+                                            last_translated_text = current_sentence
                                             await schedule_translation(
                                                 current_sentence, 
                                                 is_refine=False
@@ -322,24 +393,21 @@ async def deepgram_transcription(websocket: WebSocket) -> None:
                 logger.error(f"[{session_id}] Deepgram listener error: {e}")
 
     try:
-        # Build Deepgram URL with optimized parameters
-        utterance_end_ms = settings.deepgram_utterance_end_ms
-        vad_events = str(settings.deepgram_vad_events).lower()
-        
+        # Build Deepgram URL with MINIMAL parameters (to avoid 400 errors)
         params = [
-            "model=nova-2",
+            "model=nova-3",
             "encoding=linear16",
-            "sample_rate=24000",
+            "sample_rate=16000",  # Must match AudioContext sample rate
             "channels=1",
             "punctuate=true",
             "interim_results=true",
-            f"utterance_end_ms={utterance_end_ms}",  # Faster endpointing
-            f"vad_events={vad_events}",  # Voice activity detection
-            "smart_format=true",  # Better punctuation
         ]
+        
         url = f"{DEEPGRAM_URL}?{'&'.join(params)}"
         
-        logger.info(f"[{session_id}] Connecting to Deepgram (utterance_end_ms={utterance_end_ms})...")
+        # Debug: Log URL and API key prefix
+        logger.info(f"[{session_id}] Deepgram URL: {url}")
+        logger.info(f"[{session_id}] API key prefix: {deepgram_api_key[:8]}... (len={len(deepgram_api_key)})")
         
         # Connect with authorization header
         deepgram_ws = await websockets.connect(
@@ -421,7 +489,9 @@ async def deepgram_transcription(websocket: WebSocket) -> None:
     finally:
         ws_closed = True
         
-        # Cancel any pending translation
+        # Cancel any pending translation tasks
+        if pending_fast_task and not pending_fast_task.done():
+            pending_fast_task.cancel()
         if current_translate_task and not current_translate_task.done():
             current_translate_task.cancel()
         

@@ -74,9 +74,9 @@ let translatedHistory: string[] = [];
 // Transcription providers
 type TranscriptionProvider = "deepgram" | "openai" | "google" | "assemblyai";
 const PROVIDERS: Record<TranscriptionProvider, { endpoint: string; name: string; latency: string; quality: string; sampleRate: number }> = {
-  deepgram: { endpoint: "ws://127.0.0.1:8000/api/deepgram", name: "Deepgram", latency: "~300ms", quality: "Excellent", sampleRate: 24000 },
+  deepgram: { endpoint: "ws://127.0.0.1:8000/api/deepgram", name: "Deepgram", latency: "~300ms", quality: "Excellent", sampleRate: 16000 },
   openai: { endpoint: "ws://127.0.0.1:8000/api/realtime", name: "OpenAI Realtime", latency: "~1-2s", quality: "Good", sampleRate: 24000 },
-  google: { endpoint: "ws://127.0.0.1:8000/api/google-speech", name: "Google Cloud", latency: "~500ms", quality: "Good", sampleRate: 24000 },
+  google: { endpoint: "ws://127.0.0.1:8000/api/google-speech", name: "Google Cloud", latency: "~500ms", quality: "Good", sampleRate: 16000 },
   assemblyai: { endpoint: "ws://127.0.0.1:8000/api/assemblyai", name: "AssemblyAI", latency: "~400ms", quality: "High", sampleRate: 16000 },
 };
 
@@ -96,6 +96,25 @@ async function getTranscriptionProvider(): Promise<TranscriptionProvider> {
     } catch (e) {
       console.error("Failed to get provider:", e);
       resolve("openai");
+    }
+  });
+}
+
+async function getQualityMode(): Promise<"fast" | "quality"> {
+  return new Promise((resolve) => {
+    try {
+      chrome.storage.sync.get({ qualityMode: "fast" }, (items) => {
+        if (chrome.runtime.lastError) {
+          console.error("Storage error:", chrome.runtime.lastError);
+          resolve("fast");
+          return;
+        }
+        const mode = items.qualityMode === "quality" ? "quality" : "fast";
+        resolve(mode);
+      });
+    } catch (e) {
+      console.error("Failed to get quality mode:", e);
+      resolve("fast");
     }
   });
 }
@@ -242,10 +261,12 @@ async function connectWebSocket(): Promise<void> {
     const translationProvider = await getTranslationProvider();
     websocket = new WebSocket(provider.endpoint);
 
-    websocket.onopen = () => {
+    websocket.onopen = async () => {
       console.log("WebSocket connected");
       // Get provider-specific sample rate
       const providerInfo = PROVIDERS[selectedProvider];
+      // Get quality mode setting
+      const qualityMode = await getQualityMode();
       // Send config
       websocket?.send(JSON.stringify({
         type: "config",
@@ -253,6 +274,7 @@ async function connectWebSocket(): Promise<void> {
         targetLang: hudState?.targetLang ?? "en",
         translationProvider: translationProvider,
         sampleRate: providerInfo.sampleRate,
+        qualityMode: qualityMode,
       }));
       resolve();
     };
@@ -298,30 +320,16 @@ async function connectWebSocket(): Promise<void> {
           }
         }
         
-        // Translation ready
+        // Translation ready (only use refine pass, skip fast pass previews)
         else if (data.type === "translation") {
+          const isRefine = data.is_refine === true;
           const translation = String(data.translation || "").trim();
-          if (translation) {
+          // Only add final translations (refine pass), skip fast pass previews
+          if (translation && isRefine) {
             translatedHistory.push(translation);
             lastTranslatedText = translation;
             updateHudUI();
           }
-        }
-        
-        // Legacy format (backward compatibility)
-        else if (data.type === "transcript") {
-          const original = String(data.original || "").trim();
-          const translation = String(data.translation || "").trim();
-          
-          if (original) {
-            originalHistory.push(original);
-            lastOriginalText = original;
-          }
-          if (translation) {
-            translatedHistory.push(translation);
-            lastTranslatedText = translation;
-          }
-          updateHudUI();
         }
         
         else if (data.type === "error") {

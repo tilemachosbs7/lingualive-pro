@@ -14,6 +14,7 @@ const speechSourceSelect = document.getElementById("lt-speech-source") as HTMLSe
 const speechTargetSelect = document.getElementById("lt-speech-target") as HTMLSelectElement | null;
 const transcriptionProviderSelect = document.getElementById("lt-transcription-provider") as HTMLSelectElement | null;
 const translationProviderSelect = document.getElementById("lt-translation-provider") as HTMLSelectElement | null;
+const qualityModeSelect = document.getElementById("lt-quality-mode") as HTMLSelectElement | null;
 
 function loadBackendUrl(): void {
   chrome.storage.sync.get({ backendUrl: DEFAULT_BACKEND }, (items) => {
@@ -112,11 +113,25 @@ function saveTranslationProvider(): void {
   chrome.storage.sync.set({ translationProvider: provider });
 }
 
+function loadQualityMode(): void {
+  chrome.storage.sync.get({ qualityMode: "fast" }, (items) => {
+    if (qualityModeSelect) {
+      qualityModeSelect.value = items.qualityMode ?? "fast";
+    }
+  });
+}
+
+function saveQualityMode(): void {
+  const mode = qualityModeSelect?.value ?? "fast";
+  chrome.storage.sync.set({ qualityMode: mode });
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   loadBackendUrl();
   loadSpeechPrefs();
   loadTranscriptionProvider();
   loadTranslationProvider();
+  loadQualityMode();
 
   if (saveButton) {
     saveButton.addEventListener("click", saveBackendUrl);
@@ -140,6 +155,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
   if (translationProviderSelect) {
     translationProviderSelect.addEventListener("change", saveTranslationProvider);
+  }
+
+  if (qualityModeSelect) {
+    qualityModeSelect.addEventListener("change", saveQualityMode);
   }
 
   // Show the current backend URL in result for quick visibility.
