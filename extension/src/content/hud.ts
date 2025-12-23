@@ -8,6 +8,7 @@ import {
   searchLanguages,
   LanguageInfo 
 } from '../languageData';
+import { getBackendBaseUrl } from '../api/backendClient';
 
 const HUD_ID = "lingualive-hud-root";
 const MIN_WIDTH = 260;
@@ -134,6 +135,62 @@ function showWarningToast(msg: string): void { showToast(msg, 'warning'); }
 function showInfoToast(msg: string): void { showToast(msg, 'info'); }
 
 // ============================================================================
+// SPEED MODE BADGE (AAA)
+// ============================================================================
+const SPEED_MODE_BADGE_ID = 'lingualive-speed-mode-badge';
+
+function updateSpeedModeBadge(enabled: boolean): void {
+  const hudContainer = document.getElementById(HUD_ID);
+  if (!hudContainer) return;
+  
+  let badge = document.getElementById(SPEED_MODE_BADGE_ID) as HTMLDivElement;
+  
+  if (enabled) {
+    if (!badge) {
+      badge = document.createElement('div');
+      badge.id = SPEED_MODE_BADGE_ID;
+      badge.style.cssText = `
+        position: absolute;
+        top: 4px;
+        right: 100px;
+        background: linear-gradient(135deg, #f59e0b, #d97706);
+        color: white;
+        font-size: 10px;
+        font-weight: bold;
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        z-index: 10;
+        animation: pulse 2s infinite;
+      `;
+      badge.textContent = '⚡ Speed';
+      badge.title = 'Speed Mode: Prioritizing low latency over translation quality';
+      
+      // Add pulse animation if not exists
+      if (!document.getElementById('speed-mode-pulse-style')) {
+        const style = document.createElement('style');
+        style.id = 'speed-mode-pulse-style';
+        style.textContent = `
+          @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+          }
+        `;
+        document.head.appendChild(style);
+      }
+      
+      hudContainer.appendChild(badge);
+    }
+  } else {
+    if (badge) {
+      badge.remove();
+    }
+  }
+}
+
+// ============================================================================
 // CONFIDENCE VISUALIZATION (5.1)
 // ============================================================================
 interface ConfidenceInfo {
@@ -226,14 +283,58 @@ let translatedHistory: string[] = [];
 // AAA: Single draft slot - fast pass updates this, refine finalizes to history
 let currentDraftTranslation: string | null = null;
 
-// Transcription providers
+// AAA: Smooth UI updates - batch renders with requestAnimationFrame
+let lastPartialUpdateTime = 0;
+const PARTIAL_UPDATE_THROTTLE_MS = 100; // Min ms between partial updates (increased for smoothness)
+let pendingPartialUpdate: string | null = null;
+let partialUpdateTimer: ReturnType<typeof setTimeout> | null = null;
+let rafPending = false;  // RAF frame pending
+let pendingUIUpdate = false;  // UI update queued
+
+// Smooth batched updateHudUI - coalesces multiple calls into single RAF
+function scheduleUIUpdate(): void {
+  pendingUIUpdate = true;
+  if (!rafPending) {
+    rafPending = true;
+    requestAnimationFrame(() => {
+      rafPending = false;
+      if (pendingUIUpdate) {
+        pendingUIUpdate = false;
+        updateHudUI();
+      }
+    });
+  }
+}
+
+// AAA: History limit to prevent DOM bloat
+const MAX_HISTORY_LINES = 30;
+
+// AAA: Debug flags for first events
+let firstPartialReceived = false;
+let firstCompleteReceived = false;
+let firstTranslationReceived = false;
+
+// AAA: WebSocket ready state and detected language
+let wsReadyState: "waiting" | "ready" | "connected" = "waiting";
+let detectedLanguage: string | null = null;
+
+// AAA: Binary audio mode for Deepgram (lower latency, less CPU)
+let useBinaryAudio = false;
+
+// Transcription providers - endpoints are relative paths, base URL comes from settings
 type TranscriptionProvider = "deepgram" | "openai" | "google" | "assemblyai";
-const PROVIDERS: Record<TranscriptionProvider, { endpoint: string; name: string; latency: string; quality: string; sampleRate: number }> = {
-  deepgram: { endpoint: "ws://127.0.0.1:8000/api/deepgram", name: "Deepgram", latency: "~300ms", quality: "Excellent", sampleRate: 16000 },
-  openai: { endpoint: "ws://127.0.0.1:8000/api/realtime", name: "OpenAI Realtime", latency: "~1-2s", quality: "Good", sampleRate: 24000 },
-  google: { endpoint: "ws://127.0.0.1:8000/api/google-speech", name: "Google Cloud", latency: "~500ms", quality: "Good", sampleRate: 16000 },
-  assemblyai: { endpoint: "ws://127.0.0.1:8000/api/assemblyai", name: "AssemblyAI", latency: "~400ms", quality: "High", sampleRate: 16000 },
+const PROVIDERS: Record<TranscriptionProvider, { path: string; name: string; latency: string; quality: string; sampleRate: number }> = {
+  deepgram: { path: "/api/deepgram", name: "Deepgram", latency: "~300ms", quality: "Excellent", sampleRate: 16000 },
+  openai: { path: "/api/realtime", name: "OpenAI Realtime", latency: "~1-2s", quality: "Good", sampleRate: 24000 },
+  google: { path: "/api/google-speech", name: "Google Cloud", latency: "~500ms", quality: "Good", sampleRate: 16000 },
+  assemblyai: { path: "/api/assemblyai", name: "AssemblyAI", latency: "~400ms", quality: "High", sampleRate: 16000 },
 };
+
+/** Convert HTTP base URL to WebSocket URL */
+function getWsUrl(baseUrl: string, path: string): string {
+  const wsBase = baseUrl.replace(/^http/, 'ws').replace(/\/+$/, '');
+  return `${wsBase}${path}`;
+}
 
 let selectedProvider: TranscriptionProvider = "openai";
 
@@ -331,41 +432,46 @@ function updateHudUI(): void {
     }
   }
 
-  const originalPlaceholder = hudMode === "capturing" ? "Listening..." : "Waiting to start";
-  const translatedPlaceholder = hudMode === "processing" ? "Translating..." : "";
-
+  // No placeholders - just show text as it comes, clean and simple
   if (originalBox) {
     const historyText = originalHistory.join(" ");
-    originalBox.textContent = historyText || originalPlaceholder;
-    // Auto-scroll to bottom
-    originalBox.scrollTop = originalBox.scrollHeight;
+    // Only update if content changed (reduces flicker)
+    if (historyText && originalBox.textContent !== historyText) {
+      originalBox.textContent = historyText;
+      // Auto-scroll to bottom
+      originalBox.scrollTop = originalBox.scrollHeight;
+    }
   }
   if (translatedBox) {
-    // AAA: Show history + draft (draft in lighter style)
+    // Show history + draft continuously
     const historyText = translatedHistory.join(" ");
     
-    // If there's a draft, show it with different styling
+    // Build full text (history + draft if any)
+    let fullText = historyText;
     if (currentDraftTranslation) {
-      // Create a temp container for styled content
-      translatedBox.innerHTML = "";
-      
-      if (historyText) {
+      fullText = historyText ? historyText + " " + currentDraftTranslation : currentDraftTranslation;
+    }
+    
+    // Only update if content changed
+    if (fullText && translatedBox.textContent !== fullText) {
+      // Simple text update - no innerHTML manipulation
+      if (currentDraftTranslation && historyText) {
+        // Show draft in lighter style
+        translatedBox.innerHTML = "";
         const historySpan = document.createElement("span");
         historySpan.textContent = historyText + " ";
         translatedBox.appendChild(historySpan);
+        
+        const draftSpan = document.createElement("span");
+        draftSpan.textContent = currentDraftTranslation;
+        draftSpan.style.opacity = "0.7";
+        translatedBox.appendChild(draftSpan);
+      } else {
+        translatedBox.textContent = fullText;
       }
-      
-      // Draft in italics with slightly lower opacity
-      const draftSpan = document.createElement("span");
-      draftSpan.textContent = currentDraftTranslation;
-      draftSpan.style.fontStyle = "italic";
-      draftSpan.style.opacity = "0.75";
-      translatedBox.appendChild(draftSpan);
-    } else {
-      translatedBox.textContent = historyText || translatedPlaceholder;
+      // Auto-scroll to bottom
+      translatedBox.scrollTop = translatedBox.scrollHeight;
     }
-    // Auto-scroll to bottom
-    translatedBox.scrollTop = translatedBox.scrollHeight;
   }
 
   if (errorBanner) {
@@ -388,7 +494,17 @@ async function beginCaptions(): Promise<void> {
   originalHistory = [];
   translatedHistory = [];
   currentDraftTranslation = null;  // AAA: Clear draft
+  
+  // Reset debug flags for new session
+  firstPartialReceived = false;
+  firstCompleteReceived = false;
+  firstTranslationReceived = false;
+  
   updateHudUI();
+  
+  // Show waiting state
+  showInfoToast("Waiting for Share...");
+  console.log("[LinguaLive] beginCaptions() - waiting for user to share screen/tab");
 
   try {
     // Use getDisplayMedia to let user select a tab/screen to capture
@@ -402,18 +518,43 @@ async function beginCaptions(): Promise<void> {
 
     // Check if we got audio
     const audioTracks = mediaStream.getAudioTracks();
+    console.log(`[LinguaLive] Got ${audioTracks.length} audio tracks`);
+    
     if (audioTracks.length === 0) {
       throw new Error("No audio track available. Please select a tab and enable 'Share audio'.");
     }
+    
+    // Log audio track details
+    audioTracks.forEach((track, i) => {
+      const settings = track.getSettings();
+      console.log(`[LinguaLive] Audio track ${i}: ${track.label}, sampleRate=${settings.sampleRate}, channels=${settings.channelCount}`);
+    });
 
     // Stop video track since we only need audio
     mediaStream.getVideoTracks().forEach(track => track.stop());
 
-    // Connect to WebSocket for real-time transcription
-    await connectWebSocket();
+    // === STUDIO-GRADE SAMPLE RATE FLOW ===
+    // 1. Create AudioContext FIRST (single source of truth for sample rate)
+    const providerInfo = PROVIDERS[selectedProvider];
+    audioContext = new AudioContext({ sampleRate: providerInfo.sampleRate });
+    const actualSampleRate = audioContext.sampleRate;
+    
+    console.log(`[LinguaLive] AudioContext created: actualSampleRate=${actualSampleRate} (requested=${providerInfo.sampleRate})`);
+    
+    // Warn if browser gave us a different rate than requested
+    if (actualSampleRate !== providerInfo.sampleRate) {
+      console.warn(`[LinguaLive] Sample rate mismatch! Browser: ${actualSampleRate}, Requested: ${providerInfo.sampleRate}`);
+      showWarningToast(`Using ${actualSampleRate}Hz (${providerInfo.sampleRate}Hz unavailable)`);
+    }
 
-    // Set up audio processing pipeline
-    await setupAudioPipeline(mediaStream);
+    // Show connecting state
+    showInfoToast(`Connecting to ${PROVIDERS[selectedProvider].name}...`);
+    
+    // 2. Connect to WebSocket with actual sample rate (backend connects to Deepgram with this rate)
+    await connectWebSocket(actualSampleRate);
+
+    // 3. Set up audio pipeline using the SAME AudioContext (not a new one)
+    await setupAudioPipeline(mediaStream, actualSampleRate);
 
   } catch (err) {
     cleanupCapture();
@@ -431,28 +572,48 @@ async function beginCaptions(): Promise<void> {
   }
 }
 
-async function connectWebSocket(): Promise<void> {
+async function connectWebSocket(actualSampleRate: number): Promise<void> {
   return new Promise(async (resolve, reject) => {
     const provider = PROVIDERS[selectedProvider];
     const translationProvider = await getTranslationProvider();
-    websocket = new WebSocket(provider.endpoint);
+    
+    // Get dynamic backend URL from settings
+    const baseUrl = await getBackendBaseUrl();
+    const wsEndpoint = getWsUrl(baseUrl, provider.path);
+    
+    console.log(`[LinguaLive] Connecting to WebSocket: ${wsEndpoint}`);
+    websocket = new WebSocket(wsEndpoint);
+    
+    // AAA: Enable binary audio for Deepgram (lower latency)
+    useBinaryAudio = selectedProvider === "deepgram";
+    wsReadyState = "waiting";
+    detectedLanguage = null;
 
     websocket.onopen = async () => {
-      console.log("WebSocket connected");
+      console.log("[LinguaLive] WebSocket connected");
+      wsReadyState = "connected";
       showSuccessToast(`Connected to ${provider.name}`);
-      // Get provider-specific sample rate
-      const providerInfo = PROVIDERS[selectedProvider];
+      
       // Get quality mode setting
       const qualityMode = await getQualityMode();
-      // Send config
-      websocket?.send(JSON.stringify({
+      
+      // Config uses the actual sample rate passed from beginCaptions
+      // (AudioContext was created before this call)
+      const config = {
         type: "config",
         sourceLang: hudState?.sourceLang ?? "auto",
         targetLang: hudState?.targetLang ?? "en",
         translationProvider: translationProvider,
-        sampleRate: providerInfo.sampleRate,
+        sampleRate: actualSampleRate,  // Studio-grade: single source of truth
         qualityMode: qualityMode,
-      }));
+        // Note: utteranceEndMs is determined by backend based on qualityMode
+      };
+      
+      // Debug log
+      console.log("[LinguaLive] Sending config:", config);
+      
+      // Send config
+      websocket?.send(JSON.stringify(config));
       resolve();
     };
 
@@ -460,26 +621,122 @@ async function connectWebSocket(): Promise<void> {
       try {
         const data = JSON.parse(event.data);
         
+        // AAA: Handle waiting_config state
+        if (data.type === "waiting_config") {
+          wsReadyState = "waiting";
+          console.log("Waiting for config...", data.session_id);
+          return;
+        }
+        
+        // AAA: Handle ready state - system is ready to receive audio
+        if (data.type === "ready") {
+          wsReadyState = "ready";
+          console.log("System ready", data.language_hint);
+          showInfoToast(`Ready (lang hint: ${data.language_hint || "auto"})`);
+          return;
+        }
+        
+        // AAA: Handle detected language notification
+        if (data.type === "detected_language") {
+          detectedLanguage = data.language;
+          console.log("Detected language:", detectedLanguage);
+          showInfoToast(`Language detected: ${detectedLanguage}`);
+          return;
+        }
+        
+        // AAA: Handle speech started event (VAD)
+        if (data.type === "speech_started") {
+          console.log("Speech started");
+          return;
+        }
+        
         // INSTANT: Streaming partial transcript (word by word)
+        // AAA: Throttled to prevent UI flicker on fast updates
         if (data.type === "partial") {
           const partialText = String(data.text || "").trim();
+          // Debug: log first partial
+          if (!firstPartialReceived && partialText) {
+            console.log(`[LinguaLive] First partial received: "${partialText.substring(0, 50)}..."`);
+            firstPartialReceived = true;
+          }
           if (partialText && originalBox) {
-            // Show streaming text with cursor - continuous flow
-            const historyText = originalHistory.length > 0 
-              ? originalHistory.join(" ") + " " + partialText + "▊"
-              : partialText + "▊";
-            originalBox.textContent = historyText;
-            originalBox.scrollTop = originalBox.scrollHeight;
+            const now = Date.now();
+            
+            // AAA: Smooth partial updates - only update the partial span, not the whole box
+            if (now - lastPartialUpdateTime >= PARTIAL_UPDATE_THROTTLE_MS) {
+              // Find or create the partial span
+              let partialSpan = originalBox.querySelector('.partial-text') as HTMLSpanElement;
+              if (!partialSpan) {
+                // First time - set up the box with history + partial span
+                originalBox.innerHTML = '';
+                if (originalHistory.length > 0) {
+                  const historySpan = document.createElement('span');
+                  historySpan.className = 'history-text';
+                  historySpan.textContent = originalHistory.join(" ") + " ";
+                  originalBox.appendChild(historySpan);
+                }
+                partialSpan = document.createElement('span');
+                partialSpan.className = 'partial-text';
+                originalBox.appendChild(partialSpan);
+              }
+              // Only update the partial text (not the whole box)
+              partialSpan.textContent = partialText + "▊";
+              originalBox.scrollTop = originalBox.scrollHeight;
+              lastPartialUpdateTime = now;
+              pendingPartialUpdate = null;
+            } else {
+              pendingPartialUpdate = partialText;
+              if (!partialUpdateTimer) {
+                partialUpdateTimer = setTimeout(() => {
+                  if (pendingPartialUpdate && originalBox) {
+                    const partialSpan = originalBox.querySelector('.partial-text') as HTMLSpanElement;
+                    if (partialSpan) {
+                      partialSpan.textContent = pendingPartialUpdate + "▊";
+                      originalBox.scrollTop = originalBox.scrollHeight;
+                    }
+                    lastPartialUpdateTime = Date.now();
+                  }
+                  pendingPartialUpdate = null;
+                  partialUpdateTimer = null;
+                }, PARTIAL_UPDATE_THROTTLE_MS);
+              }
+            }
           }
         }
         
         // Original transcription complete (before translation)
         else if (data.type === "original_complete") {
           const text = String(data.text || "").trim();
-          if (text) {
+          // Debug: log first complete
+          if (!firstCompleteReceived && text) {
+            console.log(`[LinguaLive] First original_complete: "${text.substring(0, 50)}..."`);
+            firstCompleteReceived = true;
+          }
+          if (text && originalBox) {
             originalHistory.push(text);
+            // AAA: Limit history to prevent DOM bloat
+            if (originalHistory.length > MAX_HISTORY_LINES) {
+              const trimmed = originalHistory.length - MAX_HISTORY_LINES;
+              originalHistory.splice(0, trimmed);
+              console.log(`[LinguaLive] Trimmed ${trimmed} lines from originalHistory`);
+            }
             lastOriginalText = text;
-            updateHudUI();
+            
+            // Update history span and clear partial
+            let historySpan = originalBox.querySelector('.history-text') as HTMLSpanElement;
+            if (!historySpan) {
+              originalBox.innerHTML = '';
+              historySpan = document.createElement('span');
+              historySpan.className = 'history-text';
+              originalBox.appendChild(historySpan);
+              const partialSpan = document.createElement('span');
+              partialSpan.className = 'partial-text';
+              originalBox.appendChild(partialSpan);
+            }
+            historySpan.textContent = originalHistory.join(" ") + " ";
+            const partialSpan = originalBox.querySelector('.partial-text') as HTMLSpanElement;
+            if (partialSpan) partialSpan.textContent = "";
+            originalBox.scrollTop = originalBox.scrollHeight;
           }
         }
         
@@ -504,23 +761,48 @@ async function connectWebSocket(): Promise<void> {
           const isRefine = data.is_refine === true;
           const translation = String(data.translation || "").trim();
           
-          if (translation) {
+          // Debug: log first translation
+          if (!firstTranslationReceived && translation) {
+            console.log(`[LinguaLive] First translation (${isRefine ? 'refine' : 'fast'}): "${translation.substring(0, 50)}..."`);
+            firstTranslationReceived = true;
+          }
+          
+          if (translation && translatedBox) {
+            // Ensure we have the span structure
+            let historySpan = translatedBox.querySelector('.history-text') as HTMLSpanElement;
+            let draftSpan = translatedBox.querySelector('.draft-text') as HTMLSpanElement;
+            if (!historySpan) {
+              translatedBox.innerHTML = '';
+              historySpan = document.createElement('span');
+              historySpan.className = 'history-text';
+              translatedBox.appendChild(historySpan);
+              draftSpan = document.createElement('span');
+              draftSpan.className = 'draft-text';
+              draftSpan.style.opacity = '0.7';
+              translatedBox.appendChild(draftSpan);
+            }
+            
             if (isRefine) {
               // REFINE PASS: Final quality translation
-              // Push to history (this is the final version)
               if (lastTranslatedText !== translation) {
                 translatedHistory.push(translation);
+                if (translatedHistory.length > MAX_HISTORY_LINES) {
+                  const trimmed = translatedHistory.length - MAX_HISTORY_LINES;
+                  translatedHistory.splice(0, trimmed);
+                  console.log(`[LinguaLive] Trimmed ${trimmed} lines from translatedHistory`);
+                }
                 lastTranslatedText = translation;
               }
-              // Clear draft slot
+              // Update history span, clear draft
+              historySpan.textContent = translatedHistory.join(" ") + " ";
+              if (draftSpan) draftSpan.textContent = "";
               currentDraftTranslation = null;
-              updateHudUI();
             } else {
-              // FAST PASS: Update draft slot only (not history)
-              // This provides immediate feedback without filling history
+              // FAST PASS: Update draft span only
               currentDraftTranslation = translation;
-              updateHudUI();
+              if (draftSpan) draftSpan.textContent = translation;
             }
+            translatedBox.scrollTop = translatedBox.scrollHeight;
             
             // Show low confidence warning if applicable
             if (data.confidence !== undefined && data.confidence < 0.5) {
@@ -534,6 +816,27 @@ async function connectWebSocket(): Promise<void> {
           const score = data.score;
           if (score !== undefined && score < 0.6) {
             showWarningToast(`Translation quality: ${Math.round(score * 100)}%`);
+          }
+        }
+        
+        // AAA: Speed Mode indicator - shows when system is in low-latency mode
+        else if (data.type === "speed_mode") {
+          const enabled = data.enabled === true;
+          console.log(`[LinguaLive] Speed Mode: ${enabled ? 'ON' : 'OFF'}`);
+          updateSpeedModeBadge(enabled);
+          
+          // x2: Dynamic silence gate - relax when Speed Mode ON to avoid word cutting
+          if (audioWorklet?.port) {
+            const silenceThreshold = enabled ? 0.001 : 0.002; // More permissive in Speed Mode
+            audioWorklet.port.postMessage({
+              type: 'config',
+              silenceThreshold: silenceThreshold,
+            });
+            console.log(`[LinguaLive] Silence gate: threshold=${silenceThreshold} (Speed Mode ${enabled ? 'ON' : 'OFF'})`);
+          }
+          
+          if (enabled) {
+            showInfoToast("⚡ Speed Mode ON (fast-only)");
           }
         }
         
@@ -572,67 +875,223 @@ async function connectWebSocket(): Promise<void> {
   });
 }
 
-async function setupAudioPipeline(stream: MediaStream): Promise<void> {
-  // Get the correct sample rate for the selected provider
-  const providerInfo = PROVIDERS[selectedProvider];
-  const sampleRate = providerInfo.sampleRate;
+async function setupAudioPipeline(stream: MediaStream, actualSampleRate: number): Promise<void> {
+  // AudioContext was already created in beginCaptions() - reuse it (single source of truth)
+  if (!audioContext) {
+    throw new Error("AudioContext not initialized - call beginCaptions first");
+  }
   
-  // Create audio context with provider-specific sample rate
-  audioContext = new AudioContext({ sampleRate });
+  console.log(`[LinguaLive] setupAudioPipeline: provider=${selectedProvider}, actualSampleRate=${actualSampleRate}`);
   
-  // Create source from stream
+  // Create source from stream using existing AudioContext
   const source = audioContext.createMediaStreamSource(stream);
   
-  // Create script processor for raw audio access
-  // Note: ScriptProcessorNode is deprecated but AudioWorklet requires more setup
-  // Buffer size adjusted based on sample rate for ~100-170ms chunks
-  const bufferSize = sampleRate === 16000 ? 2048 : 4096;
-  const processor = audioContext.createScriptProcessor(bufferSize, 1, 1);
+  // x2: Fixed chunk duration ~100ms for consistent WS frame rate
+  const targetChunkDurationMs = 100;
+  const calculatedChunkSize = Math.floor(actualSampleRate * targetChunkDurationMs / 1000);
+  console.log(`[LinguaLive] chunkDurationMs=${targetChunkDurationMs}ms, chunkSize=${calculatedChunkSize} samples at ${actualSampleRate}Hz`);
   
-  processor.onaudioprocess = (event) => {
-    if (!websocket || websocket.readyState !== WebSocket.OPEN) return;
-    
-    const inputData = event.inputBuffer.getChannelData(0);
-    
-    // Convert float32 to PCM16
-    const pcm16 = new Int16Array(inputData.length);
-    for (let i = 0; i < inputData.length; i++) {
-      const s = Math.max(-1, Math.min(1, inputData[i]));
-      pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+  // Buffer size calculated from ACTUAL sample rate for ~100-170ms chunks
+  // 16kHz: 2048 samples = 128ms, 48kHz: 4096 samples = 85ms
+  const bufferSize = actualSampleRate <= 16000 ? 2048 : 4096;
+  console.log(`[LinguaLive] Buffer size: ${bufferSize} samples (~${Math.round(bufferSize / actualSampleRate * 1000)}ms at ${actualSampleRate}Hz)`);
+  
+  // Track first frame for debugging and "Waiting for audio" UX
+  let firstFrameSent = false;
+  let lastAudioFrameAt = Date.now();
+  
+  // AAA: Show "Waiting for audio..." if no frame sent after 2s
+  const waitingForAudioTimeout = setTimeout(() => {
+    if (!firstFrameSent) {
+      showWarningToast("Waiting for audio... Make sure tab audio is playing");
+      console.log("[LinguaLive] Warning: No audio frames after 2s");
     }
-    
-    // Convert to base64 (for OpenAI/Google/AssemblyAI, which expect base64)
-    const uint8 = new Uint8Array(pcm16.buffer);
+  }, 2000);
+  
+  // x2: Watchdog for stalled audio pipeline - auto-recover if no frames >2s
+  const audioWatchdog = setInterval(() => {
+    if (firstFrameSent && hudMode === 'capturing') {
+      const timeSinceLastFrame = Date.now() - lastAudioFrameAt;
+      if (timeSinceLastFrame > 2000) {
+        console.warn(`[LinguaLive] Audio stall detected (${timeSinceLastFrame}ms) → restarting pipeline`);
+        showWarningToast("Audio stalled - restarting...");
+        // Soft restart: recreate worklet without new share prompt
+        clearInterval(audioWatchdog);
+        cleanupCapture().then(() => {
+          // Re-capture with same stream if still active
+          if (currentStream && currentStream.active) {
+            setupAudioPipeline(currentStream, actualSampleRate).catch(err => {
+              console.error("Failed to restart audio pipeline:", err);
+            });
+          }
+        });
+      }
+    }
+  }, 3000); // Check every 3s
+  
+  // Helper function to convert Uint8Array (PCM16) to base64
+  const pcm16ToBase64 = (uint8Array: Uint8Array): string => {
     let binary = "";
-    for (let i = 0; i < uint8.length; i++) {
-      binary += String.fromCharCode(uint8[i]);
+    for (let i = 0; i < uint8Array.length; i++) {
+      binary += String.fromCharCode(uint8Array[i]);
     }
-    const base64 = btoa(binary);
-    
-    // Send JSON audio
-    websocket.send(JSON.stringify({
-      type: "audio",
-      data: base64,
-    }));
+    return btoa(binary);
   };
   
-  // Connect nodes
-  source.connect(processor);
-  processor.connect(audioContext.destination);
+  // Helper function to handle audio data and send via WebSocket
+  // AAA: Send binary for Deepgram (lower latency, less CPU), base64 for others
+  const handleAudioData = (uint8Array: Uint8Array, preferBinary: boolean = false): void => {
+    // x2: Update watchdog timestamp
+    lastAudioFrameAt = Date.now();
+    
+    // AAA: Log first frame and show "audio ok" status
+    if (!firstFrameSent) {
+      firstFrameSent = true;
+      clearTimeout(waitingForAudioTimeout);
+      console.log(`[LinguaLive] Audio OK - First frame: ${uint8Array.length} bytes, binary=${preferBinary && useBinaryAudio}, sampleRate=${actualSampleRate}`);
+      showSuccessToast("Audio streaming...");
+    }
+    if (!websocket || websocket.readyState !== WebSocket.OPEN) return;
+    
+    // AAA: WS backpressure - decimation instead of full drop (x2 playback resilience)
+    // x2: Increased threshold (256KB) + decimation to keep STT running
+    const MAX_BUFFERED_AMOUNT = 256 * 1024; // 256KB threshold
+    if (websocket.bufferedAmount > MAX_BUFFERED_AMOUNT) {
+      // Decimation: keep 1 in 3 frames instead of dropping all
+      if (Math.random() > 0.33) {
+        if (Math.random() < 0.01) { // Log 1% to avoid spam
+          console.warn(`[LinguaLive] Backpressure: decimating frames (buffered=${websocket.bufferedAmount})`);
+        }
+        return;
+      }
+    }
+    
+    // AAA: Binary mode for Deepgram - send ArrayBuffer directly
+    if (useBinaryAudio && preferBinary) {
+      // Send as binary WebSocket frame
+      websocket.send(uint8Array.buffer);
+    } else {
+      // Fallback to base64 JSON for other providers
+      const base64 = pcm16ToBase64(uint8Array);
+      websocket.send(JSON.stringify({
+        type: "audio",
+        data: base64,
+      }));
+    }
+  };
   
-  // Mute output (we don't want to hear our own audio)
-  const gainNode = audioContext.createGain();
-  gainNode.gain.value = 0;
-  processor.connect(gainNode);
-  gainNode.connect(audioContext.destination);
+  // Try to use AudioWorklet (modern API, no deprecation warnings)
+  try {
+    // Get the worklet URL from extension
+    const workletUrl = chrome.runtime.getURL("public/audio-worklet-processor.js");
+    
+    // Add the worklet module
+    await audioContext.audioWorklet.addModule(workletUrl);
+    
+    // Create AudioWorkletNode
+    audioWorklet = new AudioWorkletNode(audioContext, "audio-worklet-processor", {
+      numberOfInputs: 1,
+      numberOfOutputs: 1,
+      channelCount: 1,
+    });
+    
+    // x2: Send fixed chunk size to worklet for consistent frame duration
+    audioWorklet.port.postMessage({
+      type: 'config',
+      chunkSize: calculatedChunkSize,
+    });
+    
+    // Handle messages from the worklet processor
+    // AAA: Check for binary flag from worklet for optimized sending
+    audioWorklet.port.onmessage = (event) => {
+      if (event.data.type === "audio" && event.data.data) {
+        // Convert ArrayBuffer to Uint8Array
+        const audioData = new Uint8Array(event.data.data);
+        // AAA: Use binary flag from worklet if available
+        const preferBinary = event.data.binary === true;
+        handleAudioData(audioData, preferBinary);
+      }
+    };
+    
+    // Connect nodes
+    source.connect(audioWorklet);
+    
+    // Mute output (we don't want to hear our own audio)
+    const gainNode = audioContext.createGain();
+    gainNode.gain.value = 0;
+    audioWorklet.connect(gainNode);
+    gainNode.connect(audioContext.destination);
+    
+    console.log("AudioWorklet initialized successfully");
+  } catch (error) {
+    // Fallback to ScriptProcessorNode for browsers that don't support AudioWorklet
+    console.warn("AudioWorklet not supported, falling back to ScriptProcessorNode:", error);
+    audioWorklet = null;
+    
+    // Create script processor for raw audio access (deprecated but supported as fallback)
+    const processor = audioContext.createScriptProcessor(bufferSize, 1, 1);
+    
+    processor.onaudioprocess = (event) => {
+      if (!websocket || websocket.readyState !== WebSocket.OPEN) return;
+      
+      const inputData = event.inputBuffer.getChannelData(0);
+      
+      // Convert float32 to PCM16
+      const pcm16 = new Int16Array(inputData.length);
+      for (let i = 0; i < inputData.length; i++) {
+        const s = Math.max(-1, Math.min(1, inputData[i]));
+        pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+      }
+      
+      // Convert to Uint8Array and send
+      // AAA: Use binary mode for Deepgram (useBinaryAudio flag set at WS connect)
+      const uint8 = new Uint8Array(pcm16.buffer);
+      handleAudioData(uint8, useBinaryAudio);
+    };
+    
+    // Connect nodes
+    source.connect(processor);
+    
+    // Mute output (we don't want to hear our own audio)
+    const gainNode = audioContext.createGain();
+    gainNode.gain.value = 0;
+    processor.connect(gainNode);
+    gainNode.connect(audioContext.destination);
+  }
 }
 
 function cleanupCapture(): void {
-  // Close WebSocket
+  // AAA: Clean up throttle timer
+  if (partialUpdateTimer) {
+    clearTimeout(partialUpdateTimer);
+    partialUpdateTimer = null;
+  }
+  pendingPartialUpdate = null;
+  wsReadyState = "waiting";
+  detectedLanguage = null;
+  
+  // Close WebSocket with guard
   if (websocket) {
-    websocket.send(JSON.stringify({ type: "stop" }));
-    websocket.close();
+    try {
+      if (websocket.readyState === WebSocket.OPEN) {
+        websocket.send(JSON.stringify({ type: "stop" }));
+      }
+    } catch (e) {
+      console.debug("[LinguaLive] WS send stop failed (already closed)", e);
+    }
+    try {
+      websocket.close();
+    } catch (e) {
+      console.debug("[LinguaLive] WS close failed", e);
+    }
     websocket = null;
+  }
+  
+  // Disconnect and cleanup AudioWorklet
+  if (audioWorklet) {
+    audioWorklet.disconnect();
+    audioWorklet.port.close();
+    audioWorklet = null;
   }
   
   // Close audio context

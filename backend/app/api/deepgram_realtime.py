@@ -15,7 +15,7 @@ import logging
 import os
 import time
 import uuid
-from typing import Optional
+from typing import Dict, List, Optional, Tuple
 
 import websockets
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -124,12 +124,27 @@ async def deepgram_transcription(websocket: WebSocket) -> None:
     listen_task = None
     ws_closed = False
     config_received = False  # AAA: Wait for config before Deepgram connection
+    client_sample_rate = 16000  # AAA: Actual sample rate from client
+    client_utterance_end_ms = 0  # AAA: Per-mode endpointing from client (0 = use default)
     
     # Latest-wins task management
     current_translate_task: Optional[asyncio.Task] = None
     translate_task_lock = asyncio.Lock()
     pending_fast_task: Optional[asyncio.Task] = None
     last_translate_scheduled_at = 0.0
+    
+    # AAA: Partial translation throttle
+    last_partial_translate_time = 0.0
+    
+    # AAA: Backpressure state
+    backpressure_engaged = False
+    effective_min_partial_chars = settings.partial_translate_min_chars
+    
+    # AAA: Speed Mode (auto-enable when latency is high for x2 playback)
+    # x2: Lower threshold (900ms) for earlier activation
+    speed_mode = False
+    speed_mode_threshold_ms = 900  # Enable when p95 > this (was 1200)
+    partial_min_stable_updates = 2  # Require 2+ updates to be "stable"
     
     # Context window for better translations
     context_buffer: list = []  # Keep recent sentences
@@ -139,7 +154,21 @@ async def deepgram_transcription(websocket: WebSocket) -> None:
     session_start_time = time.perf_counter()
     total_translations = 0
     total_translation_time_ms = 0.0
-    stt_to_translate_times: list = []  # AAA: Track STT->translate latency
+    stt_to_translate_times: List[float] = []  # AAA: Track STT->translate latency
+    
+    # AAA: Latency metrics for p50/p95 tracking
+    fast_pass_latencies: List[float] = []
+    refine_pass_latencies: List[float] = []
+    
+    # AAA: Detected language from Deepgram (auto-propagate to DeepL)
+    detected_language: Optional[str] = None
+    
+    # AAA: Session-scoped refine cache (only cache final/refine translations)
+    session_refine_cache: Dict[str, str] = {}
+    
+    # x2: Watchdog for stalled Deepgram results
+    last_audio_received_at = time.perf_counter()
+    last_result_received_at = time.perf_counter()
 
     async def safe_send(data: dict) -> bool:
         """Send JSON to client with error handling."""
@@ -207,14 +236,40 @@ async def deepgram_transcription(websocket: WebSocket) -> None:
             if asyncio.current_task().cancelled():
                 return
             
-            # Translate with source language hint
-            translation = await translation_service.translate_text(
-                text=processed_text,
-                target_lang=target_lang,
-                source_lang=source_lang if source_lang != "auto" else None,
-                provider=translation_provider,
-                timeout_ms=settings.translation_timeout_ms,
-            )
+            # AAA: Session-scoped refine cache - only for refine pass
+            cache_key = processed_text.lower().strip()
+            if is_refine_pass and cache_key in session_refine_cache:
+                translation = session_refine_cache[cache_key]
+                logger.debug(f"[{session_id}] Session cache hit for refine")
+            else:
+                # AAA: Use detected language from Deepgram if available (faster DeepL)
+                effective_source = source_lang
+                if (effective_source == "auto" or not effective_source) and detected_language:
+                    effective_source = detected_language
+                    logger.debug(f"[{session_id}] Using Deepgram detected language: {detected_language}")
+                
+                # AAA: Different timeouts for fast vs refine
+                timeout = settings.translation_timeout_fast_ms if not is_refine_pass else settings.translation_timeout_ms
+                
+                # Translate with source language hint
+                translation = await translation_service.translate_text(
+                    text=processed_text,
+                    target_lang=target_lang,
+                    source_lang=effective_source if effective_source != "auto" else None,
+                    provider=translation_provider,
+                    timeout_ms=timeout,
+                    is_refine=is_refine_pass,  # AAA: Pass refine flag for quality tuning
+                )
+                
+                # AAA: Cache only refine pass results (session-scoped)
+                if is_refine_pass and translation:
+                    session_refine_cache[cache_key] = translation
+                    # Keep cache bounded
+                    if len(session_refine_cache) > 100:
+                        # Remove oldest entries
+                        oldest_keys = list(session_refine_cache.keys())[:20]
+                        for k in oldest_keys:
+                            session_refine_cache.pop(k, None)
             
             # Check for cancellation after translation
             if asyncio.current_task().cancelled():
@@ -224,6 +279,16 @@ async def deepgram_transcription(websocket: WebSocket) -> None:
             total_translations += 1
             total_translation_time_ms += translate_duration_ms
             
+            # AAA: Log translation timing (redacted - no user text for privacy)
+            pass_type = "refine" if is_refine_pass else "fast"
+            logger.info(f"[{session_id}] Translation {pass_type}: {translate_duration_ms:.0f}ms, chars={len(processed_text)}")
+            
+            # AAA: Track latency by pass type for p50/p95 metrics
+            if is_refine_pass:
+                refine_pass_latencies.append(translate_duration_ms)
+            else:
+                fast_pass_latencies.append(translate_duration_ms)
+            
             # Send translation with metadata
             await safe_send({
                 "type": "translation",
@@ -231,6 +296,7 @@ async def deepgram_transcription(websocket: WebSocket) -> None:
                 "translation": translation,
                 "is_refine": is_refine_pass,  # Optional field for HUD
                 "latency_ms": round(translate_duration_ms, 1),  # Optional timing
+                "detected_lang": detected_language,  # AAA: Send detected language to UI
             })
             
             logger.debug(
@@ -255,10 +321,51 @@ async def deepgram_transcription(websocket: WebSocket) -> None:
             })
 
     async def _schedule_now(text: str, is_refine: bool, confidence: float = 1.0) -> None:
-        """Execute translation immediately with latest-wins cancellation."""
+        """Execute translation immediately with latest-wins cancellation.
+        
+        Also handles backpressure and Speed Mode for x2 playback.
+        """
         nonlocal current_translate_task, last_translate_scheduled_at
+        nonlocal backpressure_engaged, effective_min_partial_chars, speed_mode
         
         last_translate_scheduled_at = time.perf_counter()
+        
+        # AAA: Speed Mode + Backpressure check
+        if len(fast_pass_latencies) >= 5:
+            sorted_lat = sorted(fast_pass_latencies[-20:])  # Last 20 calls
+            p95_idx = min(int(len(sorted_lat) * 0.95), len(sorted_lat) - 1)
+            current_p95 = sorted_lat[p95_idx]
+            
+            # Speed Mode: Enable when p95 is very high (x2 playback scenario)
+            if current_p95 > speed_mode_threshold_ms:
+                if not speed_mode:
+                    speed_mode = True
+                    logger.warning(f"[{session_id}] Speed Mode ON! p95={current_p95:.1f}ms > {speed_mode_threshold_ms}ms")
+                    await safe_send({"type": "speed_mode", "enabled": True})
+            elif speed_mode and current_p95 < speed_mode_threshold_ms * 0.6:
+                speed_mode = False
+                logger.info(f"[{session_id}] Speed Mode OFF, p95={current_p95:.1f}ms")
+                await safe_send({"type": "speed_mode", "enabled": False})
+            
+            # Backpressure: Reduce partial translation frequency
+            if current_p95 > settings.backpressure_p95_threshold_ms:
+                if not backpressure_engaged:
+                    backpressure_engaged = True
+                    new_min = int(settings.partial_translate_min_chars * settings.backpressure_min_chars_multiplier)
+                    logger.warning(
+                        f"[{session_id}] Backpressure engaged! p95={current_p95:.1f}ms, "
+                        f"min_chars {effective_min_partial_chars} -> {new_min}"
+                    )
+                    effective_min_partial_chars = new_min
+            elif backpressure_engaged and current_p95 < settings.backpressure_p95_threshold_ms * 0.7:
+                backpressure_engaged = False
+                effective_min_partial_chars = settings.partial_translate_min_chars
+                logger.info(f"[{session_id}] Backpressure released, p95={current_p95:.1f}ms")
+        
+        # AAA: In Speed Mode, skip refine pass (fast-only for low latency)
+        if speed_mode and is_refine:
+            logger.debug(f"[{session_id}] Skipping refine (Speed Mode active)")
+            return
         
         async with translate_task_lock:
             # Cancel previous task if still running (latest wins)
@@ -320,22 +427,81 @@ async def deepgram_transcription(websocket: WebSocket) -> None:
         await _schedule_now(text, is_refine=is_refine, confidence=confidence)
 
     async def listen_to_deepgram() -> None:
-        """Listen for Deepgram responses with two-pass translation and confidence filtering."""
-        nonlocal current_sentence, ws_closed
+        """Listen for Deepgram responses with two-pass translation, VAD events, and detected language."""
+        nonlocal current_sentence, ws_closed, detected_language, last_partial_translate_time
+        nonlocal last_audio_received_at, last_result_received_at
         
         accumulated_text = ""  # Text since last speech_final
         last_translated_text = ""  # Avoid re-translating same text
+        first_result_logged = False  # AAA: Debug - log first result
+        
+        # AAA: Partial stability filter state
+        last_stable_partial = ""
+        partial_stable_count = 0
         
         try:
             async for message in deepgram_ws:
                 if ws_closed:
                     break
+                    
+                # x2: Watchdog - check for stalled Deepgram results
+                now = time.perf_counter()
+                if now - last_audio_received_at < 5.0:  # Audio still coming
+                    if now - last_result_received_at > 8.0:  # But no results >8s
+                        logger.warning(f"[{session_id}] Deepgram stalled (audio active, no results for {now - last_result_received_at:.1f}s) → reconnect needed")
+                        # Set flag for reconnection (handled by outer error handling)
+                        raise Exception("Deepgram stalled - no results despite active audio")
+                
                 try:
                     data = json.loads(message)
+                    
+                    # Update result timestamp on any valid message
+                    last_result_received_at = now
+                    
+                    # AAA: Handle VAD events (speech start/end)
+                    if data.get("type") == "SpeechStarted":
+                        logger.debug(f"[{session_id}] Speech started")
+                        await safe_send({"type": "speech_started"})
+                        continue
+                    
+                    # AAA: Handle UtteranceEnd event (more reliable than speech_final in some cases)
+                    if data.get("type") == "UtteranceEnd":
+                        logger.debug(f"[{session_id}] Utterance end detected")
+                        # If we have accumulated text, treat as sentence end
+                        if accumulated_text.strip():
+                            final_text = accumulated_text.strip()
+                            accumulated_text = ""
+                            await safe_send({
+                                "type": "original_complete",
+                                "text": final_text,
+                            })
+                            await schedule_translation(final_text, is_refine=True, confidence=0.9)
+                        continue
                     
                     if data.get("type") == "Results":
                         channel = data.get("channel", {})
                         alternatives = channel.get("alternatives", [])
+                        
+                        # AAA: Log first Results for debugging
+                        if not first_result_logged:
+                            first_result_logged = True
+                            logger.info(f"[{session_id}] First Deepgram Results received")
+                        
+                        # AAA: Extract detected language from Deepgram response
+                        metadata = data.get("metadata", {})
+                        if metadata.get("detected_language") and not detected_language:
+                            detected_language = metadata["detected_language"]
+                            logger.info(f"[{session_id}] Deepgram detected language: {detected_language}")
+                            await safe_send({
+                                "type": "detected_language",
+                                "language": detected_language,
+                            })
+                        
+                        # Also check model_info for language
+                        if not detected_language:
+                            model_info = data.get("model_info", {})
+                            if model_info.get("language"):
+                                detected_language = model_info["language"]
                         
                         if alternatives:
                             alt = alternatives[0]
@@ -345,9 +511,11 @@ async def deepgram_transcription(websocket: WebSocket) -> None:
                             speech_final = data.get("speech_final", False)
                             
                             # === CONFIDENCE FILTERING ===
+                            # x2: Use lower threshold in Speed Mode to avoid dropping words
                             if settings.enable_confidence_filter:
-                                if confidence < settings.min_confidence_threshold:
-                                    logger.debug(f"[{session_id}] Skipping low confidence result ({confidence:.2f}): {transcript[:30]}")
+                                threshold = settings.min_confidence_threshold_speed if speed_mode else settings.min_confidence_threshold
+                                if confidence < threshold:
+                                    logger.debug(f"[{session_id}] Skipping low confidence result ({confidence:.2f}, threshold={threshold:.2f}): {len(transcript)} chars")
                                     continue
                             
                             if transcript:
@@ -362,13 +530,20 @@ async def deepgram_transcription(websocket: WebSocket) -> None:
                                         "text": current_sentence,
                                     })
                                     
+                                    # AAA: Check for sentence-ending punctuation or max words
+                                    # This forces earlier translation for long sentences
+                                    word_count = len(current_sentence.split())
+                                    has_sentence_end = any(current_sentence.rstrip().endswith(p) for p in ['.', '!', '?', '。', '！', '？'])
+                                    max_words = settings.max_words_before_flush
+                                    should_flush = has_sentence_end or (word_count >= max_words)
+                                    
                                     # === TWO-PASS TRANSLATION ===
                                     if settings.enable_two_pass_translation:
                                         # FAST PASS: Translate immediately on is_final
                                         # Only if text changed significantly AND has enough words
-                                        word_count = len(current_sentence.split())
                                         if (
                                             not speech_final 
+                                            and not should_flush
                                             and word_count >= settings.min_words_for_translation
                                             and current_sentence != last_translated_text
                                         ):
@@ -376,10 +551,27 @@ async def deepgram_transcription(websocket: WebSocket) -> None:
                                             await schedule_translation(
                                                 current_sentence, 
                                                 is_refine=False,
-                                                confidence=confidence  # AAA: Pass confidence
+                                                confidence=confidence
                                             )
                                     
-                                    if speech_final:
+                                    # AAA: Force flush on punctuation or max words (treat as speech_final)
+                                    if should_flush and not speech_final:
+                                        logger.debug(f"[{session_id}] Auto-flush: {word_count} words, punct={has_sentence_end}")
+                                        final_text = accumulated_text.strip()
+                                        accumulated_text = ""
+                                        
+                                        await safe_send({
+                                            "type": "original_complete",
+                                            "text": final_text,
+                                        })
+                                        
+                                        # REFINE PASS for auto-flushed sentence
+                                        await schedule_translation(
+                                            final_text, 
+                                            is_refine=True,
+                                            confidence=confidence
+                                        )
+                                    elif speech_final:
                                         # End of utterance - send complete original
                                         final_text = accumulated_text.strip()
                                         accumulated_text = ""
@@ -393,7 +585,7 @@ async def deepgram_transcription(websocket: WebSocket) -> None:
                                         await schedule_translation(
                                             final_text, 
                                             is_refine=True,
-                                            confidence=confidence  # AAA: Pass confidence for adaptive syntax fix
+                                            confidence=confidence
                                         )
                                 else:
                                     # Interim result - show preview
@@ -402,6 +594,43 @@ async def deepgram_transcription(websocket: WebSocket) -> None:
                                         "type": "partial",
                                         "text": preview.strip(),
                                     })
+                                    
+                                    # AAA: Partial stability filter - only translate if stable
+                                    preview_text = preview.strip()
+                                    word_diff = len(preview_text.split()) - len(last_stable_partial.split())
+                                    
+                                    # Check stability: same as last OR grew by 6+ words
+                                    if preview_text == last_stable_partial:
+                                        partial_stable_count += 1
+                                    elif word_diff >= 6:
+                                        # Big jump = treat as stable
+                                        partial_stable_count = partial_min_stable_updates
+                                        last_stable_partial = preview_text
+                                    else:
+                                        partial_stable_count = 1
+                                        last_stable_partial = preview_text
+                                    
+                                    # AAA: Fast translation from partials (throttled + stable)
+                                    now = time.perf_counter()
+                                    partial_interval = settings.partial_translate_interval_ms / 1000.0
+                                    time_since_last = now - last_partial_translate_time
+                                    
+                                    is_stable = partial_stable_count >= partial_min_stable_updates
+                                    
+                                    if (
+                                        len(preview_text) >= effective_min_partial_chars
+                                        and time_since_last >= partial_interval
+                                        and preview_text != last_translated_text
+                                        and is_stable  # Stability filter
+                                    ):
+                                        last_partial_translate_time = now
+                                        last_translated_text = preview_text
+                                        logger.debug(f"[{session_id}] Stable partial accepted: {len(preview_text)} chars")
+                                        await schedule_translation(
+                                            preview_text,
+                                            is_refine=False,
+                                            confidence=confidence
+                                        )
                                         
                 except json.JSONDecodeError:
                     pass
@@ -428,17 +657,31 @@ async def deepgram_transcription(websocket: WebSocket) -> None:
         return lang_map.get(lang.lower(), lang.lower())
 
     async def connect_to_deepgram(sample_rate: int = 16000) -> None:
-        """Connect to Deepgram with language hint."""
+        """Connect to Deepgram with language hint, VAD events, and proper endpointing."""
         nonlocal deepgram_ws, listen_task
         
+        # Use configurable model (nova-2 or nova-3)
         params = [
-            "model=nova-3",
+            f"model={settings.deepgram_model}",
             "encoding=linear16",
             f"sample_rate={sample_rate}",
             "channels=1",
             "punctuate=true",
             "interim_results=true",
+            # AAA: Enable smart formatting for cleaner output
+            "smart_format=true",
         ]
+        
+        # AAA: Enable VAD events for speech start/end detection (if configured)
+        if settings.deepgram_vad_events:
+            params.append("vad_events=true")
+        
+        # AAA: Adaptive endpointing per mode - use client value if sent, else fall back to config
+        # client_utterance_end_ms is set from config message (fast=280ms, quality=600ms)
+        endpointing_ms = client_utterance_end_ms if client_utterance_end_ms > 0 else settings.deepgram_utterance_end_ms
+        if endpointing_ms > 0:
+            params.append(f"endpointing={endpointing_ms}")
+            logger.info(f"[{session_id}] Using endpointing={endpointing_ms}ms (mode={quality_mode})")
         
         # AAA: Add language hint if source language is known (major speed win!)
         dg_lang = get_deepgram_language_code(source_lang)
@@ -490,11 +733,19 @@ async def deepgram_transcription(websocket: WebSocket) -> None:
                             source_lang = data.get("sourceLang", None)
                             translation_provider = data.get("translationProvider", "deepl")
                             quality_mode = data.get("qualityMode", "fast")
-                            # Get sample rate from client (HUD sends audioContext.sampleRate)
+                            # Get sample rate from client (HUD sends actual audioContext.sampleRate)
                             client_sample_rate = data.get("sampleRate", 16000)
+                            
+                            # AAA: Determine endpointing based on qualityMode (backend decides, not client)
+                            if quality_mode == "quality":
+                                client_utterance_end_ms = settings.deepgram_utterance_end_quality_ms
+                            else:
+                                client_utterance_end_ms = settings.deepgram_utterance_end_fast_ms
+                            
                             logger.info(
                                 f"[{session_id}] Config: {source_lang} -> {target_lang}, "
-                                f"provider={translation_provider}, quality={quality_mode}, sampleRate={client_sample_rate}"
+                                f"provider={translation_provider}, quality={quality_mode}, "
+                                f"sampleRate={client_sample_rate}, endpointing={client_utterance_end_ms}ms"
                             )
                             
                             # AAA: Connect to Deepgram with language hint and sample rate
@@ -516,21 +767,32 @@ async def deepgram_transcription(websocket: WebSocket) -> None:
                                 audio_buffer.clear()
                         
                         elif msg_type == "audio":
+                            # x2: Update watchdog timestamp for received audio
+                            last_audio_received_at = time.perf_counter()
+                            
                             audio_b64 = data.get("data", "")
                             if audio_b64:
-                                audio_bytes = base64.b64decode(audio_b64)
-                                if deepgram_ws:
-                                    await deepgram_ws.send(audio_bytes)
-                                else:
-                                    # Buffer audio until Deepgram connects
-                                    audio_buffer.append(audio_bytes)
-                                    if len(audio_buffer) > 100:
-                                        audio_buffer.pop(0)
+                                # AAA: Safe base64 decoding - don't crash on bad data
+                                try:
+                                    audio_bytes = base64.b64decode(audio_b64)
+                                    if deepgram_ws:
+                                        await deepgram_ws.send(audio_bytes)
+                                    else:
+                                        # Buffer audio until Deepgram connects
+                                        audio_buffer.append(audio_bytes)
+                                        if len(audio_buffer) > 100:
+                                            audio_buffer.pop(0)
+                                except Exception as decode_error:
+                                    logger.warning(f"[{session_id}] Base64 decode error (skipping chunk): {decode_error}")
+                                    # Continue processing - don't kill session
                         
                         elif msg_type == "stop":
                             break
                     
                     elif "bytes" in message:
+                        # x2: Update watchdog timestamp for binary audio
+                        last_audio_received_at = time.perf_counter()
+                        
                         if deepgram_ws:
                             await deepgram_ws.send(message["bytes"])
                         else:
@@ -581,13 +843,35 @@ async def deepgram_transcription(websocket: WebSocket) -> None:
             except Exception:
                 pass
         
-        # Log session metrics
+        # Log session metrics with p50/p95 latency
         session_duration = time.perf_counter() - session_start_time
         avg_translation = (
             total_translation_time_ms / total_translations 
             if total_translations > 0 else 0
         )
+        
+        # AAA: Calculate p50/p95 latency metrics
+        def calc_percentiles(latencies: List[float]) -> Tuple[float, float]:
+            if not latencies:
+                return 0.0, 0.0
+            sorted_lat = sorted(latencies)
+            p50 = sorted_lat[len(sorted_lat) // 2]
+            p95_idx = min(int(len(sorted_lat) * 0.95), len(sorted_lat) - 1)
+            p95 = sorted_lat[p95_idx]
+            return p50, p95
+        
+        fast_p50, fast_p95 = calc_percentiles(fast_pass_latencies)
+        refine_p50, refine_p95 = calc_percentiles(refine_pass_latencies)
+        
         logger.info(
             f"[{session_id}] Session ended: {session_duration:.1f}s, "
             f"{total_translations} translations, avg {avg_translation:.1f}ms/translation"
         )
+        logger.info(
+            f"[{session_id}] Fast pass latency: p50={fast_p50:.1f}ms, p95={fast_p95:.1f}ms ({len(fast_pass_latencies)} calls)"
+        )
+        logger.info(
+            f"[{session_id}] Refine pass latency: p50={refine_p50:.1f}ms, p95={refine_p95:.1f}ms ({len(refine_pass_latencies)} calls)"
+        )
+        if detected_language:
+            logger.info(f"[{session_id}] Detected language: {detected_language}")

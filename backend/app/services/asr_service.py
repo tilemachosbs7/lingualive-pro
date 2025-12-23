@@ -21,14 +21,16 @@ class ASRResult:
 class ASRService:
     """Simple ASR client using OpenAI audio transcription API."""
 
-    def __init__(self, api_key: str, model: str):
-        if not api_key:
-            raise ValueError("OPENAI_API_KEY is required.")
-        self.api_key = api_key
+    def __init__(self, api_key: str | None, model: str):
+        # OpenAI API key is optional - only needed if using OpenAI ASR
+        self.api_key = api_key or ""
         self.model = model
         self._endpoint = "https://api.openai.com/v1/audio/transcriptions"
 
     async def transcribe_audio(self, audio_bytes: bytes, *, source_lang: str | None = None) -> ASRResult:
+        # Check API key at runtime
+        if not self.api_key:
+            raise ASRServiceError("OpenAI API key is required for ASR transcription. Please configure OPENAI_API_KEY.")
         if not audio_bytes:
             raise ASRServiceError("No audio data provided.")
 
@@ -62,4 +64,6 @@ class ASRService:
         return ASRResult(text=text.strip(), detected_lang=detected_lang)
 
 
+# Lazy initialization - service is created even if API key is None
+# Will raise error at runtime if used without key
 asr_service = ASRService(api_key=settings.openai_api_key, model=settings.openai_asr_model)

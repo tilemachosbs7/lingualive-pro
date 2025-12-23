@@ -1,5 +1,9 @@
 import { translateAudio } from "./api/backendClient";
 
+// NOTE: This background service worker is currently unused.
+// The messages LT_START_TAB_CAPTURE and LT_AUDIO_READY are not sent from any content script.
+// Keeping for potential future tab audio capture feature.
+
 type LTMessage =
   | { type: "LT_START_TAB_CAPTURE"; payload: { sourceLang: string; targetLang: string } }
   | { type: "LT_STOP_TAB_CAPTURE" }

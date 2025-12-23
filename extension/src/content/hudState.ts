@@ -58,10 +58,19 @@ export async function loadHudState(): Promise<HudPersistedState> {
         customFonts: stored?.customFonts || [],
       };
 
-      // Always compute a centered-right position on load for visibility
-      // Center vertically, right side with 40px margin
-      state.top = Math.max((window.innerHeight - state.height) / 2, 12);
-      state.left = Math.max(window.innerWidth - state.width - 60, 12);
+      // Use stored position if available and valid, otherwise compute centered-right position
+      // Only compute if position is not persisted (top/left are -1 or not set)
+      // Check if stored values exist and are valid (>= 0)
+      if (stored?.top !== undefined && stored.top >= 0) {
+        state.top = stored.top; // Use persisted position
+      } else {
+        state.top = Math.max((window.innerHeight - state.height) / 2, 12);
+      }
+      if (stored?.left !== undefined && stored.left >= 0) {
+        state.left = stored.left; // Use persisted position
+      } else {
+        state.left = Math.max(window.innerWidth - state.width - 60, 12);
+      }
 
       resolve(state);
     });

@@ -9,26 +9,43 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
-    openai_api_key: str = Field(..., alias="OPENAI_API_KEY")
+    # OpenAI is optional - only required if using OpenAI provider
+    openai_api_key: str = Field("", alias="OPENAI_API_KEY")  # Optional for Deepgram+DeepL
     openai_translation_model: str = Field("gpt-4o-mini", alias="OPENAI_TRANSLATION_MODEL")
     openai_asr_model: str = Field("whisper-1", alias="OPENAI_ASR_MODEL")
     backend_port: int = Field(8000, alias="BACKEND_PORT")
     cors_origins: List[str] = Field(default_factory=lambda: ["*"], alias="CORS_ORIGINS")
     
     # Deepgram optimization settings
-    deepgram_utterance_end_ms: int = Field(400, alias="DEEPGRAM_UTTERANCE_END_MS")
+    deepgram_model: str = Field("nova-3", alias="DEEPGRAM_MODEL")  # nova-3 (latest) or nova-2
+    deepgram_utterance_end_ms: int = Field(400, alias="DEEPGRAM_UTTERANCE_END_MS")  # Fallback if not sent by client
+    deepgram_utterance_end_fast_ms: int = Field(280, alias="DEEPGRAM_UTTERANCE_END_FAST_MS")  # Fast mode: quicker sentence end
+    deepgram_utterance_end_quality_ms: int = Field(600, alias="DEEPGRAM_UTTERANCE_END_QUALITY_MS")  # Quality: better coherence
     deepgram_vad_events: bool = Field(True, alias="DEEPGRAM_VAD_EVENTS")
+    
+    # Partial translation settings (live preview)
+    partial_translate_interval_ms: int = Field(400, alias="PARTIAL_TRANSLATE_INTERVAL_MS")  # Throttle for partial translation
+    partial_translate_min_chars: int = Field(20, alias="PARTIAL_TRANSLATE_MIN_CHARS")  # Min chars before translating partial
+    
+    # Backpressure settings
+    backpressure_p95_threshold_ms: int = Field(800, alias="BACKPRESSURE_P95_THRESHOLD_MS")  # If p95 > this, engage backpressure
+    backpressure_min_chars_multiplier: float = Field(1.5, alias="BACKPRESSURE_MIN_CHARS_MULTIPLIER")  # Increase min chars by this
     
     # Translation optimization settings
     enable_syntax_fix: bool = Field(False, alias="ENABLE_SYNTAX_FIX")
     enable_two_pass_translation: bool = Field(True, alias="ENABLE_TWO_PASS_TRANSLATION")
     translation_timeout_ms: int = Field(5000, alias="TRANSLATION_TIMEOUT_MS")
+    # AAA: Separate fast pass timeout (lower for responsiveness)
+    translation_timeout_fast_ms: int = Field(2000, alias="TRANSLATION_TIMEOUT_FAST_MS")
     syntax_fix_timeout_ms: int = Field(3000, alias="SYNTAX_FIX_TIMEOUT_MS")
     translation_rate_limit_ms: int = Field(100, alias="TRANSLATION_RATE_LIMIT_MS")  # Reduced for faster response
     
     # DeepL specific
     deepl_glossary_id: str = Field("", alias="DEEPL_GLOSSARY_ID")
     deepl_formality: str = Field("default", alias="DEEPL_FORMALITY")  # default|more|less|prefer_more|prefer_less
+    # AAA: DeepL fast/quality mode tuning
+    deepl_fast_split_sentences: str = Field("0", alias="DEEPL_FAST_SPLIT_SENTENCES")  # "0" for single sentence, "1" for newlines
+    deepl_quality_split_sentences: str = Field("nonewlines", alias="DEEPL_QUALITY_SPLIT_SENTENCES")  # More careful splitting
     
     # Caching & buffering
     enable_translation_cache: bool = Field(True, alias="ENABLE_TRANSLATION_CACHE")
@@ -43,6 +60,7 @@ class Settings(BaseSettings):
     
     # Deepgram confidence filtering
     min_confidence_threshold: float = Field(0.7, alias="MIN_CONFIDENCE_THRESHOLD")  # Skip low-confidence results
+    min_confidence_threshold_speed: float = Field(0.5, alias="MIN_CONFIDENCE_THRESHOLD_SPEED")  # x2: Lower threshold in Speed Mode
     enable_confidence_filter: bool = Field(True, alias="ENABLE_CONFIDENCE_FILTER")
     
     # AAA: Adaptive syntax fix threshold (only run syntax fix if confidence < this)
@@ -50,6 +68,7 @@ class Settings(BaseSettings):
     
     # Smart partial handling
     min_words_for_translation: int = Field(3, alias="MIN_WORDS_FOR_TRANSLATION")  # Min words before translating
+    max_words_before_flush: int = Field(15, alias="MAX_WORDS_BEFORE_FLUSH")  # AAA: Auto-flush after N words
     max_cache_size: int = Field(500, alias="MAX_CACHE_SIZE")  # Max cached translations
     
     # === AAA STUDIO ENHANCEMENTS ===

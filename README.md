@@ -4,7 +4,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Chrome Extension](https://img.shields.io/badge/Chrome-Extension-green.svg)](https://www.google.com/chrome/)
-[![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://www.python.org/)
 
 ## 📚 Πλήρης Τεκμηρίωση
 
@@ -137,7 +137,6 @@
    
    Copy the example files and add your API keys:
    ```bash
-   cp .env.example .env
    cp backend/.env.example backend/.env
    cp backend/google-credentials.example.json backend/google-credentials.json
    ```

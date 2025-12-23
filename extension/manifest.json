@@ -5,9 +5,6 @@
   "version": "0.2.0",
   "permissions": ["storage", "tabs", "activeTab"],
   "host_permissions": ["<all_urls>"],
-  "background": {
-    "service_worker": "dist/background.js"
-  },
   "action": {
     "default_title": "LanguageTranslate",
     "default_popup": "popup.html"
@@ -18,6 +15,12 @@
       "matches": ["<all_urls>"],
       "js": ["dist/content/hud.js"],
       "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["public/audio-worklet-processor.js"],
+      "matches": ["<all_urls>"]
     }
   ]
 }

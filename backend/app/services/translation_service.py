@@ -100,6 +100,11 @@ class TranslationService:
         self._cache_hits = 0
         self._total_latency_ms = 0.0
 
+    async def close(self) -> None:
+        """Close the HTTP client and cleanup resources."""
+        if self._client:
+            await self._client.aclose()
+
     def add_context(self, text: str) -> None:
         """Add a sentence to context buffer for context-aware translation."""
         self._context_buffer.append(text)
@@ -130,6 +135,7 @@ class TranslationService:
         use_context: bool = False,
         session_id: str = None,
         confidence: float = 1.0,  # STT confidence score
+        is_refine: bool = False,  # AAA: Refine pass flag for quality vs fast tuning
     ) -> str:
         """Translate using selected provider with timeout budget.
         
@@ -142,6 +148,7 @@ class TranslationService:
             use_context: Whether to use context buffer for better translation
             session_id: Optional session ID for conversation memory
             confidence: STT confidence score for adaptive filtering
+            is_refine: True for refine pass (quality), False for fast pass (speed)
         
         Returns:
             Translated text
@@ -153,6 +160,34 @@ class TranslationService:
         text = text.strip()
         if not text:
             return ""
+        
+        # AAA: FAST MODE - Skip heavy processing for fast pass (speed > quality)
+        if not is_refine:
+            # Fast path: Direct translation with minimal overhead
+            try:
+                base_timeout = timeout_ms or settings.translation_timeout_fast_ms
+                timeout_s = base_timeout / 1000.0
+                
+                result = await asyncio.wait_for(
+                    self._translate_internal(text, source_lang, target_lang, provider, is_refine=False),
+                    timeout=timeout_s
+                )
+                
+                # Minimal stats update
+                latency_ms = (time.perf_counter() - start_time) * 1000
+                self._total_latency_ms += latency_ms
+                
+                return result
+            except asyncio.TimeoutError:
+                logger.warning(f"Fast translation timeout after {timeout_ms}ms")
+                return ""  # Return empty for fast pass timeout (refine will handle it)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.warning(f"Fast translation error: {e}")
+                return ""
+        
+        # === REFINE MODE - Full processing pipeline ===
         
         # === ADVANCED: Translation Memory Check (before any processing) ===
         if settings.enable_translation_memory:
@@ -180,13 +215,15 @@ class TranslationService:
                 return ""
         
         # === ADVANCED: Language Pair Profile ===
+        # AAA: Per-request formality (no global mutation for thread safety)
+        request_formality = self.deepl_formality  # Start with default
         if settings.enable_language_profiles:
             profile = optimization_controller.language_profiles.get_profile(
                 source_lang or "en", target_lang
             )
-            # Override formality based on profile
+            # Override formality based on profile (local only)
             if profile.formality != "default":
-                self.deepl_formality = profile.formality
+                request_formality = profile.formality
         
         # === AAA ENHANCEMENT: Preprocess with ALL features ===
         restoration_map = {}
@@ -219,7 +256,7 @@ class TranslationService:
         # === AAA ENHANCEMENT: Auto-Formality Detection ===
         auto_formality = enhancement_service.detect_formality(text, source_lang or "en")
         if auto_formality != "default":
-            self.deepl_formality = auto_formality
+            request_formality = auto_formality  # Local only, no global mutation
             logger.debug(f"Auto-detected formality: {auto_formality}")
         
         # === AAA ENHANCEMENT: Network-aware Timeout ===
@@ -280,7 +317,7 @@ class TranslationService:
                 text_to_translate = f"{context_str} {processed_text}"
             
             result = await asyncio.wait_for(
-                self._translate_with_retry(text_to_translate, source_lang, target_lang, actual_provider),
+                self._translate_with_retry(text_to_translate, source_lang, target_lang, actual_provider, is_refine=True),
                 timeout=timeout_s
             )
             
@@ -400,13 +437,14 @@ class TranslationService:
         source_lang: Optional[str],
         target_lang: str,
         provider: str,
+        is_refine: bool = False,
     ) -> str:
         """Translate with retry logic."""
         last_error = None
         
         for attempt in range(self._retry_count + 1):
             try:
-                return await self._translate_internal(text, source_lang, target_lang, provider)
+                return await self._translate_internal(text, source_lang, target_lang, provider, is_refine=is_refine)
             except Exception as e:
                 last_error = e
                 if attempt < self._retry_count:
@@ -423,6 +461,7 @@ class TranslationService:
         source_lang: Optional[str],
         target_lang: str,
         provider: str,
+        is_refine: bool = False,
     ) -> str:
         """Internal translation dispatch."""
         
@@ -437,7 +476,7 @@ class TranslationService:
         # DeepL (optimized path)
         if provider == "deepl" and self.deepl_key:
             try:
-                return await self._translate_deepl(text, target_lang, source_lang)
+                return await self._translate_deepl(text, target_lang, source_lang, is_refine=is_refine)
             except Exception as e:
                 logger.warning(f"DeepL error (falling back to OpenAI): {e}")
                 return await self._translate_openai(text, target_lang)
@@ -450,16 +489,23 @@ class TranslationService:
         text: str,
         target_lang: str,
         source_lang: Optional[str] = None,
+        is_refine: bool = False,
     ) -> str:
         """Translate using DeepL API with maximum optimization.
         
         Optimizations:
         - source_lang hint to skip auto-detect
-        - latency_optimized model type (prefer_quality_optimized for refine pass)
-        - split_sentences=0 for single sentences
+        - split_sentences based on is_refine (fast vs quality)
         - Glossary support
         """
         start_time = time.perf_counter()
+        
+        # Validate input - DeepL requires non-empty text
+        if not text or not text.strip():
+            logger.debug("DeepL: Empty text, returning empty")
+            return ""
+        
+        text = text.strip()
         
         # Map language codes to DeepL format
         lang_map = {
@@ -499,11 +545,32 @@ class TranslationService:
         
         target = lang_map.get(target_lang, target_lang.upper())
         
+        # Validate target language - DeepL API requires valid language codes
+        valid_targets = ["BG", "CS", "DA", "DE", "EL", "EN-GB", "EN-US", "ES", "ET", "FI", 
+                         "FR", "HU", "ID", "IT", "JA", "KO", "LT", "LV", "NB", "NL", "PL", 
+                         "PT-BR", "PT-PT", "RO", "RU", "SK", "SL", "SV", "TR", "UK", "ZH", "AR"]
+        if target not in valid_targets:
+            # Try without region suffix
+            target_base = target.split("-")[0]
+            if target_base == "EN":
+                target = "EN-US"
+            elif target_base == "PT":
+                target = "PT-BR"
+            elif target_base not in [t.split("-")[0] for t in valid_targets]:
+                logger.warning(f"DeepL: Unsupported target language '{target}', falling back to EN-US")
+                target = "EN-US"
+        
         payload = {
             "text": [text],  # DeepL v2 expects array
             "target_lang": target,
-            "split_sentences": "0",  # Don't split - already one sentence
         }
+        
+        # AAA: Add split_sentences based on fast/quality mode
+        # Fast uses "0" (don't split), Quality uses "nonewlines" (careful splitting)
+        if is_refine:
+            payload["split_sentences"] = settings.deepl_quality_split_sentences
+        else:
+            payload["split_sentences"] = settings.deepl_fast_split_sentences
         
         # Add source language hint if available (skips auto-detect = faster)
         if source_lang and source_lang != "auto":
@@ -519,14 +586,29 @@ class TranslationService:
         if self.deepl_glossary_id:
             payload["glossary_id"] = self.deepl_glossary_id
         
-        # Add formality level (if not default)
+        # Add formality level (only for supported languages)
+        # DeepL formality is NOT supported for: EN, EN-US, EN-GB, JA, ZH, KO, AR, and several others
+        # Only apply formality for languages that explicitly support it
+        formality_supported = {
+            "DE", "FR", "IT", "ES", "NL", "PL", "RU",
+            "PT-BR", "PT-PT"  # Portuguese variants
+        }
+        target_base = target.split("-")[0]  # Get base language (e.g., "EN" from "EN-US")
+        
         if self.deepl_formality and self.deepl_formality != "default":
-            payload["formality"] = self.deepl_formality
+            # Check both full target (PT-BR) and base (DE)
+            if target in formality_supported or (target_base in formality_supported and "-" not in target):
+                payload["formality"] = self.deepl_formality
+            else:
+                logger.debug(f"Skipping formality for unsupported target: {target}")
         
         headers = {
             "Authorization": f"DeepL-Auth-Key {self.deepl_key}",
             "Content-Type": "application/json",
         }
+        
+        # AAA: Debug log the FULL request for troubleshooting
+        logger.info(f"DeepL request: endpoint={self.deepl_endpoint}, payload={payload}")
         
         # AAA: DeepL 429 Rate Limit Handling with Exponential Backoff
         max_retries = settings.deepl_retry_count
@@ -539,6 +621,10 @@ class TranslationService:
                     headers=headers,
                     json=payload,
                 )
+                
+                # AAA: Log response status for debugging
+                if response.status_code != 200:
+                    logger.warning(f"DeepL response {response.status_code}: {response.text[:200]}")
                 
                 # Handle rate limiting (429)
                 if response.status_code == 429:

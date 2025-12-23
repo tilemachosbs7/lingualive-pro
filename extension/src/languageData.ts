@@ -223,7 +223,7 @@ export const LANGUAGES: LanguageInfo[] = [
   { code: 'hr', name: 'Croatian', nativeName: 'Hrvatski', sttProviders: ['openai', 'google'], translationProviders: ['google', 'openai'] },
   { code: 'ht', name: 'Haitian Creole', nativeName: 'Kreyòl Ayisyen', sttProviders: ['google'], translationProviders: ['google', 'openai'] },
   { code: 'hu', name: 'Hungarian', nativeName: 'Magyar', sttProviders: ['openai', 'google'], translationProviders: ['deepl', 'google', 'openai'] },
-  { code: 'hy', name: 'Armenian', nativeName: 'Հայերdelays', sttProviders: ['openai', 'google'], translationProviders: ['google', 'openai'] },
+  { code: 'hy', name: 'Armenian', nativeName: 'Հայերեն', sttProviders: ['openai', 'google'], translationProviders: ['google', 'openai'] },
   { code: 'id', name: 'Indonesian', nativeName: 'Bahasa Indonesia', sttProviders: ['deepgram', 'openai', 'google'], translationProviders: ['deepl', 'google', 'openai'] },
   { code: 'ig', name: 'Igbo', nativeName: 'Igbo', sttProviders: ['google'], translationProviders: ['google', 'openai'] },
   { code: 'is', name: 'Icelandic', nativeName: 'Íslenska', sttProviders: ['openai', 'google'], translationProviders: ['google', 'openai'] },

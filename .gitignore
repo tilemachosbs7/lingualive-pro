@@ -52,10 +52,6 @@ Thumbs.db
 google-credentials.json
 backend/google-credentials.json
 
-# Test outputs
-testsprite_tests/tmp/
-backend/google-credentials.json
-
 # Build outputs
 extension/dist/
 *.map
