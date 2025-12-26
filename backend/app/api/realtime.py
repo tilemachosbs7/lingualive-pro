@@ -76,15 +76,6 @@ async def realtime_transcription(websocket: WebSocket) -> None:
     current_partial = ""  # Buffer for streaming text
     translation_provider = "deepl"  # Default to DeepL
 
-    # Check OpenAI API key before attempting connection
-    if not settings.openai_api_key:
-        await websocket.send_json({
-            "type": "error",
-            "message": "OpenAI API key required for /api/realtime endpoint. Please configure OPENAI_API_KEY environment variable."
-        })
-        await websocket.close()
-        return
-
     try:
         import websockets
 
@@ -169,7 +160,7 @@ async def realtime_transcription(websocket: WebSocket) -> None:
                                 
                                 # Now do syntax check + translation in background
                                 asyncio.create_task(
-                                    process_and_translate(websocket, transcript, target_lang, source_lang, translation_provider)
+                                    process_and_translate(websocket, transcript, target_lang, translation_provider)
                                 )
 
                         elif event_type == "error":
@@ -186,7 +177,7 @@ async def realtime_transcription(websocket: WebSocket) -> None:
             except Exception as e:
                 logger.error(f"OpenAI listener error: {e}")
 
-        async def process_and_translate(ws: WebSocket, text: str, target: str, source: str, provider: str = "deepl") -> None:
+        async def process_and_translate(ws: WebSocket, text: str, target: str, provider: str = "deepl") -> None:
             """Check syntax and translate (runs in background)."""
             try:
                 # Step 1: Syntax check (quick)
@@ -201,12 +192,12 @@ async def realtime_transcription(websocket: WebSocket) -> None:
                     })
                     text = corrected
                 
-                # Step 2: Translate (pass source_lang for better accuracy/latency)
+                # Step 2: Translate
                 translation = await translation_service.translate_text(
                     text=text,
                     target_lang=target,
-                    source_lang=source if source != "auto" else None,
-                    provider=provider,
+                    source_lang=None,
+                                    provider=provider,
                 )
                 
                 # Send final translation

@@ -24,8 +24,8 @@ class Settings(BaseSettings):
     deepgram_vad_events: bool = Field(True, alias="DEEPGRAM_VAD_EVENTS")
     
     # Partial translation settings (live preview)
-    partial_translate_interval_ms: int = Field(400, alias="PARTIAL_TRANSLATE_INTERVAL_MS")  # Throttle for partial translation
-    partial_translate_min_chars: int = Field(20, alias="PARTIAL_TRANSLATE_MIN_CHARS")  # Min chars before translating partial
+    partial_translate_interval_ms: int = Field(250, alias="PARTIAL_TRANSLATE_INTERVAL_MS")  # Faster partial translation (was 400)
+    partial_translate_min_chars: int = Field(10, alias="PARTIAL_TRANSLATE_MIN_CHARS")  # Lower threshold (was 20)
     
     # Backpressure settings
     backpressure_p95_threshold_ms: int = Field(800, alias="BACKPRESSURE_P95_THRESHOLD_MS")  # If p95 > this, engage backpressure

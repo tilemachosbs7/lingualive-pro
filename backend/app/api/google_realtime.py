@@ -24,12 +24,6 @@ router = APIRouter(prefix="/api", tags=["google"])
 
 async def check_and_fix_syntax(text: str) -> str:
     """Quick syntax/grammar check using GPT."""
-    # Skip if OpenAI key is not available
-    openai_key = settings.openai_api_key
-    if not openai_key:
-        logger.debug("Skipping syntax fix - OpenAI API key not configured")
-        return text
-    
     import httpx
     
     prompt = "Fix any transcription errors or grammar issues. Only output the corrected text, nothing else. If text is correct, output it unchanged."
@@ -45,23 +39,19 @@ async def check_and_fix_syntax(text: str) -> str:
     }
     
     headers = {
-        "Authorization": f"Bearer {openai_key}",
+        "Authorization": f"Bearer {settings.openai_api_key}",
         "Content-Type": "application/json",
     }
     
-    try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            response = await client.post(
-                "https://api.openai.com/v1/chat/completions",
-                headers=headers,
-                json=payload
-            )
-            response.raise_for_status()
-            data = response.json()
-            return data["choices"][0]["message"]["content"].strip()
-    except Exception as e:
-        logger.warning(f"Syntax fix failed (continuing with original): {e}")
-        return text  # Return original text if syntax fix fails
+    async with httpx.AsyncClient(timeout=5.0) as client:
+        response = await client.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers=headers,
+            json=payload
+        )
+        response.raise_for_status()
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
 
 
 @router.websocket("/google-speech")
@@ -89,7 +79,6 @@ async def google_transcription(websocket: WebSocket) -> None:
     target_lang = "en"
     source_lang = "en"
     translation_provider = "deepl"
-    sample_rate = 16000  # Default, will be updated from config message
     current_sentence = ""
     
     # Thread-safe queues for communication
@@ -109,14 +98,14 @@ async def google_transcription(websocket: WebSocket) -> None:
             except queue.Empty:
                 continue
 
-    def run_speech_recognition(language_code: str, sample_rate_hz: int):
+    def run_speech_recognition(language_code: str):
         """Run Google Speech recognition in a separate thread."""
         try:
             client = speech.SpeechClient()
             
             config = speech.RecognitionConfig(
                 encoding=speech.RecognitionConfig.AudioEncoding.LINEAR16,
-                sample_rate_hertz=sample_rate_hz,
+                sample_rate_hertz=24000,
                 language_code=language_code,
                 enable_automatic_punctuation=True,
                 model="latest_short",
@@ -153,13 +142,11 @@ async def google_transcription(websocket: WebSocket) -> None:
             logger.error(f"Google Speech error: {e}")
             result_queue.put({"error": str(e)})
 
-    async def process_and_translate(text: str, target: str, provider: str, quality_mode: str = "fast", source: str = None) -> None:
+    async def process_and_translate(text: str, target: str, provider: str) -> None:
         """Check syntax and translate."""
         try:
-            # Syntax check only in quality mode (skip in fast mode for lower latency)
-            corrected = text
-            if quality_mode == "quality":
-                corrected = await check_and_fix_syntax(text)
+            # Syntax check
+            corrected = await check_and_fix_syntax(text)
             
             if corrected != text:
                 await websocket.send_json({
@@ -169,11 +156,11 @@ async def google_transcription(websocket: WebSocket) -> None:
                 })
                 text = corrected
             
-            # Translate (pass source_lang to skip auto-detect and reduce latency)
+            # Translate
             translation = await translation_service.translate_text(
                 text=text,
                 target_lang=target,
-                source_lang=source if source and source != "auto" else None,
+                source_lang=None,
                 provider=provider,
             )
             
@@ -185,14 +172,6 @@ async def google_transcription(websocket: WebSocket) -> None:
             
         except Exception as e:
             logger.error(f"Translation error: {e}")
-            # Send error to client for better debugging
-            try:
-                await websocket.send_json({
-                    "type": "error",
-                    "message": f"Translation failed: {str(e)}"
-                })
-            except Exception:
-                pass  # Client may have disconnected
 
     try:
         # Language code mapping
@@ -244,7 +223,7 @@ async def google_transcription(websocket: WebSocket) -> None:
                             
                             # Translate in background
                             asyncio.create_task(
-                                process_and_translate(final_text, target_lang, translation_provider, quality_mode, source_lang)
+                                process_and_translate(final_text, target_lang, translation_provider)
                             )
                     else:
                         # Interim result
@@ -272,20 +251,15 @@ async def google_transcription(websocket: WebSocket) -> None:
                             target_lang = data.get("targetLang", "en")
                             source_lang = data.get("sourceLang", "en")
                             translation_provider = data.get("translationProvider", "deepl")
-                            quality_mode = data.get("qualityMode", "fast")  # fast or quality
-                            # Get sample rate from config message (default to 16000 if not provided)
-                            config_sample_rate = data.get("sampleRate", 16000)
-                            if isinstance(config_sample_rate, (int, float)) and config_sample_rate > 0:
-                                sample_rate = int(config_sample_rate)
-                            logger.info(f"Google STT: {source_lang} ({lang_map.get(source_lang, 'en-US')}) -> {target_lang}, quality={quality_mode}, sample_rate={sample_rate}")
                             
                             language_code = lang_map.get(source_lang, "en-US")
+                            logger.info(f"Google STT: {source_lang} ({language_code}) -> {target_lang}")
                             
                             # Start speech thread if not running
                             if speech_thread is None or not speech_thread.is_alive():
                                 speech_thread = threading.Thread(
                                     target=run_speech_recognition,
-                                    args=(language_code, sample_rate),
+                                    args=(language_code,),
                                     daemon=True
                                 )
                                 speech_thread.start()

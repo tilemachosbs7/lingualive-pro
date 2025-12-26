@@ -24,8 +24,6 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from difflib import SequenceMatcher
 
-from ..config import settings
-
 logger = logging.getLogger(__name__)
 
 
@@ -235,12 +233,11 @@ class AdaptiveConfidenceSystem:
     - Smart retry for low-confidence segments
     """
     
-    def __init__(self, min_confidence: float = 0.3):
+    def __init__(self):
         self._profiles: Dict[str, ConfidenceProfile] = {}
         self._global_baseline = 0.7
         self._noise_window: List[float] = []
         self._max_window = 50
-        self._min_confidence = min_confidence  # Absolute minimum from config
     
     def get_profile(self, lang: str) -> ConfidenceProfile:
         """Get or create confidence profile for language."""
@@ -281,8 +278,8 @@ class AdaptiveConfidenceSystem:
         """
         profile = self.get_profile(lang)
         
-        # Always reject very low confidence (uses config value)
-        if confidence < self._min_confidence:
+        # Always reject very low confidence
+        if confidence < 0.3:
             return False, "very_low_confidence"
         
         # Check against adaptive threshold
@@ -747,7 +744,7 @@ class OptimizationController:
     def __init__(self):
         self.translation_memory = TranslationMemory()
         self.context_buffer = ContextAwareBuffer()
-        self.confidence_system = AdaptiveConfidenceSystem(min_confidence=settings.adaptive_min_confidence)
+        self.confidence_system = AdaptiveConfidenceSystem()
         self.punctuation_detector = SmartPunctuationDetector()
         self.language_profiles = LanguagePairOptimizer()
         self.streaming_optimizer = StreamingOptimizer()

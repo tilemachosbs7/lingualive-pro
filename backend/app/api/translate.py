@@ -1,10 +1,11 @@
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
 from typing import Dict, Any, Optional
 
 from ..services.translation_service import translation_service
 from ..services.enhancement_service import enhancement_service
 from ..services.advanced_optimizations import optimization_controller
+# from ..services.advanced_translation_refinements import advanced_refinement_controller
 
 
 class TranslateRequest(BaseModel):
@@ -51,18 +52,8 @@ async def translate(payload: TranslateRequest) -> TranslateResponse:
 
 
 @router.get("/metrics", response_model=MetricsResponse)
-async def get_metrics(request: Request) -> MetricsResponse:
-    """Get comprehensive translation metrics and provider health status.
-    
-    Only accessible from localhost for security.
-    """
-    # Security: Only allow localhost access
-    if request.client and request.client.host not in ("127.0.0.1", "localhost", "::1"):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Metrics endpoint is only accessible from localhost"
-        )
-    
+async def get_metrics() -> MetricsResponse:
+    """Get comprehensive translation metrics and provider health status."""
     enhancement_metrics = enhancement_service.get_metrics_summary()
     translation_stats = translation_service.get_stats()
     optimization_stats = optimization_controller.get_comprehensive_stats()
@@ -77,18 +68,8 @@ async def get_metrics(request: Request) -> MetricsResponse:
 
 
 @router.post("/metrics/reset")
-async def reset_metrics(request: Request):
-    """Reset all metrics counters.
-    
-    Only accessible from localhost for security.
-    """
-    # Security: Only allow localhost access
-    if request.client and request.client.host not in ("127.0.0.1", "localhost", "::1"):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Metrics endpoint is only accessible from localhost"
-        )
-    
+async def reset_metrics():
+    """Reset all metrics counters."""
     # Reset enhancement service metrics
     enhancement_service.metrics = enhancement_service.metrics.__class__()
     return {"status": "ok", "message": "Metrics reset successfully"}

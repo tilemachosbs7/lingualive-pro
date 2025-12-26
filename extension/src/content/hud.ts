@@ -13,6 +13,10 @@ import { getBackendBaseUrl } from '../api/backendClient';
 const HUD_ID = "lingualive-hud-root";
 const MIN_WIDTH = 260;
 const MIN_HEIGHT = 140;
+
+// === DEBUG INSTRUMENTATION (toggle to enable verbose diagnostic logs) ===
+const DEBUG_STALLS = true;  // Set false to disable debug logs
+
 const THEME_DEFAULTS: Record<HudTheme, { bg: string; color: string; border: string; btnBg: string }> = {
   light: { bg: 'rgba(248, 250, 252, 0.96)', color: '#0f172a', border: '#d7dce5', btnBg: '#e2e8f0' },
   dark: { bg: 'rgba(11, 19, 32, 0.94)', color: '#e2e8f0', border: '#1f2a44', btnBg: '#1f2a44' },
@@ -280,6 +284,10 @@ let websocket: WebSocket | null = null;
 let originalHistory: string[] = [];
 let translatedHistory: string[] = [];
 
+// AAA: Segment-based tracking to allow repeated sentences
+let lastCommittedSegmentId = -1;
+let currentSegmentId = -1;
+
 // AAA: Single draft slot - fast pass updates this, refine finalizes to history
 let currentDraftTranslation: string | null = null;
 
@@ -337,6 +345,78 @@ function getWsUrl(baseUrl: string, path: string): string {
 }
 
 let selectedProvider: TranscriptionProvider = "openai";
+
+/** Detect current playback rate from any video element on the page */
+function detectPlaybackRate(): number {
+  // Try to find a video element on the page
+  const videos = document.querySelectorAll('video');
+  if (videos.length > 0) {
+    // Use the first video's playback rate (only log if changed)
+    const rate = videos[0].playbackRate;
+    return rate;
+  }
+  // Default to 1x if no video found
+  return 1.0;
+}
+
+/** Monitor for playback rate changes and update backend */
+let playbackRateMonitorInterval: ReturnType<typeof setInterval> | null = null;
+let lastKnownPlaybackRate = 1.0;
+let videoRateChangeListener: (() => void) | null = null;  // Change 9: ratechange listener
+
+function startPlaybackRateMonitoring(): void {
+  if (playbackRateMonitorInterval) return;
+  
+  // Change 9: Add ratechange listener for immediate response - Benefit: instant 0.5x/2x adaptation
+  const videos = document.querySelectorAll('video');
+  if (videos.length > 0 && !videoRateChangeListener) {
+    videoRateChangeListener = () => {
+      const currentRate = videos[0].playbackRate;
+      if (currentRate !== lastKnownPlaybackRate) {
+        lastKnownPlaybackRate = currentRate;
+        console.log(`[LinguaLive] Playback rate changed (event) to ${currentRate}x`);
+        if (websocket && websocket.readyState === WebSocket.OPEN) {
+          websocket.send(JSON.stringify({ type: "playback_rate_update", playbackRate: currentRate }));
+          showInfoToast(`Speed: ${currentRate}x`);
+        }
+      }
+    };
+    videos[0].addEventListener('ratechange', videoRateChangeListener);
+  }
+  
+  // Change 9: Reduce polling to 500ms as fallback - Benefit: faster detection if event missed
+  playbackRateMonitorInterval = setInterval(() => {
+    const currentRate = detectPlaybackRate();
+    if (currentRate !== lastKnownPlaybackRate) {
+      lastKnownPlaybackRate = currentRate;
+      console.log(`[LinguaLive] Playback rate changed (poll) to ${currentRate}x`);
+      
+      // Send update to backend
+      if (websocket && websocket.readyState === WebSocket.OPEN) {
+        websocket.send(JSON.stringify({
+          type: "playback_rate_update",
+          playbackRate: currentRate
+        }));
+        showInfoToast(`Speed: ${currentRate}x`);
+      }
+    }
+  }, 500); // Change 9: 500ms polling - Benefit: immediate adaptation without latency drift
+}
+
+function stopPlaybackRateMonitoring(): void {
+  if (playbackRateMonitorInterval) {
+    clearInterval(playbackRateMonitorInterval);
+    playbackRateMonitorInterval = null;
+  }
+  // Change 9: Remove ratechange listener
+  if (videoRateChangeListener) {
+    const videos = document.querySelectorAll('video');
+    if (videos.length > 0) {
+      videos[0].removeEventListener('ratechange', videoRateChangeListener);
+    }
+    videoRateChangeListener = null;
+  }
+}
 
 async function getTranscriptionProvider(): Promise<TranscriptionProvider> {
   return new Promise((resolve) => {
@@ -454,6 +534,10 @@ function updateHudUI(): void {
     
     // Only update if content changed
     if (fullText && translatedBox.textContent !== fullText) {
+      // DEBUG: Log when overwriting DOM while draft exists
+      if (DEBUG_STALLS && currentDraftTranslation && historyText) {
+        console.log(`[LinguaLive] DEBUG_UI: {"historyLen":${translatedHistory.length},"draftLen":${currentDraftTranslation.length},"overwrite":true}`);
+      }
       // Simple text update - no innerHTML manipulation
       if (currentDraftTranslation && historyText) {
         // Show draft in lighter style
@@ -524,10 +608,22 @@ async function beginCaptions(): Promise<void> {
       throw new Error("No audio track available. Please select a tab and enable 'Share audio'.");
     }
     
-    // Log audio track details
+    // Log audio track details AND monitor for track ending
     audioTracks.forEach((track, i) => {
       const settings = track.getSettings();
-      console.log(`[LinguaLive] Audio track ${i}: ${track.label}, sampleRate=${settings.sampleRate}, channels=${settings.channelCount}`);
+      console.log(`[LinguaLive] Audio track ${i}: ${track.label}, sampleRate=${settings.sampleRate}, channels=${settings.channelCount}, enabled=${track.enabled}, readyState=${track.readyState}`);
+      
+      // Monitor track state changes (detect when track ends/mutes)
+      track.onended = () => {
+        console.error(`[LinguaLive] Audio track ${i} ENDED unexpectedly!`);
+        showWarningToast("Audio track ended - restart capture");
+      };
+      track.onmute = () => {
+        console.warn(`[LinguaLive] Audio track ${i} MUTED`);
+      };
+      track.onunmute = () => {
+        console.log(`[LinguaLive] Audio track ${i} unmuted`);
+      };
     });
 
     // Stop video track since we only need audio
@@ -537,9 +633,42 @@ async function beginCaptions(): Promise<void> {
     // 1. Create AudioContext FIRST (single source of truth for sample rate)
     const providerInfo = PROVIDERS[selectedProvider];
     audioContext = new AudioContext({ sampleRate: providerInfo.sampleRate });
+    
+    // CRITICAL: Resume AudioContext immediately (may be suspended without user gesture)
+    if (audioContext.state === 'suspended') {
+      console.log('[LinguaLive] AudioContext is suspended, resuming...');
+      await audioContext.resume();
+      console.log('[LinguaLive] AudioContext resumed, state:', audioContext.state);
+    }
+    
+    // Monitor AudioContext state changes (debug suspension issues)
+    audioContext.onstatechange = () => {
+      const state = audioContext?.state;
+      console.log(`[LinguaLive] AudioContext state changed: ${state}`);
+      
+      // Safeguard: Detect if AudioContext is being closed unexpectedly
+      if (state === 'closed') {
+        console.error('[LinguaLive] ⚠️ AudioContext CLOSED unexpectedly - capture will stop');
+        showErrorToast('Audio context closed - restart capture');
+        // Don't try to resume a closed context
+        return;
+      }
+      
+      if (state === 'suspended') {
+        // Try to auto-resume if suspended unexpectedly
+        console.warn('[LinguaLive] AudioContext suspended unexpectedly, resuming...');
+        audioContext.resume().catch(e => console.error('[LinguaLive] Failed to resume:', e));
+      }
+      
+      // Log undefined state (should never happen)
+      if (state === undefined) {
+        console.error('[LinguaLive] ⚠️ AudioContext state is UNDEFINED - context may be destroyed');
+      }
+    };
+    
     const actualSampleRate = audioContext.sampleRate;
     
-    console.log(`[LinguaLive] AudioContext created: actualSampleRate=${actualSampleRate} (requested=${providerInfo.sampleRate})`);
+    console.log(`[LinguaLive] AudioContext created: actualSampleRate=${actualSampleRate} (requested=${providerInfo.sampleRate}), state=${audioContext.state}`);
     
     // Warn if browser gave us a different rate than requested
     if (actualSampleRate !== providerInfo.sampleRate) {
@@ -597,6 +726,10 @@ async function connectWebSocket(actualSampleRate: number): Promise<void> {
       // Get quality mode setting
       const qualityMode = await getQualityMode();
       
+      // Detect current playback rate
+      const playbackRate = detectPlaybackRate();
+      lastKnownPlaybackRate = playbackRate;
+      
       // Config uses the actual sample rate passed from beginCaptions
       // (AudioContext was created before this call)
       const config = {
@@ -606,6 +739,7 @@ async function connectWebSocket(actualSampleRate: number): Promise<void> {
         translationProvider: translationProvider,
         sampleRate: actualSampleRate,  // Studio-grade: single source of truth
         qualityMode: qualityMode,
+        playbackRate: playbackRate,  // Current video playback speed
         // Note: utteranceEndMs is determined by backend based on qualityMode
       };
       
@@ -633,6 +767,8 @@ async function connectWebSocket(actualSampleRate: number): Promise<void> {
           wsReadyState = "ready";
           console.log("System ready", data.language_hint);
           showInfoToast(`Ready (lang hint: ${data.language_hint || "auto"})`);
+          // Start monitoring for playback rate changes
+          startPlaybackRateMonitoring();
           return;
         }
         
@@ -707,11 +843,29 @@ async function connectWebSocket(actualSampleRate: number): Promise<void> {
         // Original transcription complete (before translation)
         else if (data.type === "original_complete") {
           const text = String(data.text || "").trim();
+          const segmentId = data.segment_id as number | undefined;
+          
+          // AAA: Update current segment (monotonic) and cancel pending partial timer
+          if (segmentId !== undefined) {
+            currentSegmentId = Math.max(currentSegmentId, segmentId);  // Benefit: protection from out-of-order completions
+          }
+          if (partialUpdateTimer) {
+            clearTimeout(partialUpdateTimer);
+            partialUpdateTimer = null;
+            pendingPartialUpdate = null;
+          }
+          
           // Debug: log first complete
           if (!firstCompleteReceived && text) {
-            console.log(`[LinguaLive] First original_complete: "${text.substring(0, 50)}..."`);
+            console.log(`[LinguaLive] First original_complete: "${text.substring(0, 50)}..." (segment=${segmentId})`);
             firstCompleteReceived = true;
           }
+          
+          // DEBUG: Log every original_complete
+          if (DEBUG_STALLS && text) {
+            console.log(`[LinguaLive] DEBUG_OC: {"seg":${segmentId ?? -1},"len":${text.length},"histLen":${originalHistory.length}}`);
+          }
+          
           if (text && originalBox) {
             originalHistory.push(text);
             // AAA: Limit history to prevent DOM bloat
@@ -754,16 +908,50 @@ async function connectWebSocket(actualSampleRate: number): Promise<void> {
           }
         }
         
-        // Translation ready - AAA Studio Single Draft Slot:
-        // Fast pass: Update draft (not history) for immediate feedback
-        // Refine pass: Finalize to history, clear draft
+        // Translation ready - AAA Studio Segment-Based Commit:
+        // Commit to history when final=true OR is_refine=true OR no is_refine field (other providers)
+        // Use segment_id to allow repeated sentences while preventing duplicate commits
         else if (data.type === "translation") {
           const isRefine = data.is_refine === true;
+          const isFinal = data.final === true;
           const translation = String(data.translation || "").trim();
+          const segmentId = data.segment_id as number | undefined;
+          
+          // Determine if this should commit: final OR refine OR no is_refine field (compatibility)
+          const shouldCommit = isFinal || isRefine || data.is_refine === undefined;
+          
+          // DEBUG: Log every translation
+          if (DEBUG_STALLS && translation) {
+            console.log(`[LinguaLive] DEBUG_TX: {"seg":${segmentId ?? -1},"refine":${isRefine},"final":${isFinal},"commit":${shouldCommit},"histLen":${translatedHistory.length}}`);
+          }
+          
+          // Change 5: Monotonic segment ID - Benefit: feed never goes backwards
+          if (segmentId !== undefined) {
+            currentSegmentId = Math.max(currentSegmentId, segmentId);
+          }
+          
+          // Change 5: Ignore late finals for already-committed segments - Benefit: no stuck feed
+          if (segmentId !== undefined && segmentId < lastCommittedSegmentId && isFinal) {
+             // console.log(`[LinguaLive] Ignoring late final for seg=${segmentId} (lastCommitted=${lastCommittedSegmentId})`);
+             return;
+          }
+          
+          // Change 3: Ignore duplicate final for same segment if NOT refine - Benefit: no double commits
+          if (segmentId !== undefined && segmentId === lastCommittedSegmentId && isFinal && !isRefine) {
+             // console.log(`[LinguaLive] Ignoring duplicate final for seg=${segmentId} (not refine)`);
+             return;
+          }
+          
+          // AAA: Fix for out-of-order fast previews
+          // If we receive a fast preview for an older segment, ignore it
+          if (segmentId !== undefined && segmentId < currentSegmentId && !isFinal) {
+             // console.log(`[LinguaLive] Ignoring late fast preview for seg=${segmentId} (current=${currentSegmentId})`);
+             return;
+          }
           
           // Debug: log first translation
           if (!firstTranslationReceived && translation) {
-            console.log(`[LinguaLive] First translation (${isRefine ? 'refine' : 'fast'}): "${translation.substring(0, 50)}..."`);
+            console.log(`[LinguaLive] First translation (${isRefine ? 'refine' : 'fast'}, final=${isFinal}, segment=${segmentId}): "${translation.substring(0, 50)}..."`);
             firstTranslationReceived = true;
           }
           
@@ -782,23 +970,36 @@ async function connectWebSocket(actualSampleRate: number): Promise<void> {
               translatedBox.appendChild(draftSpan);
             }
             
-            if (isRefine) {
-              // REFINE PASS: Final quality translation
-              if (lastTranslatedText !== translation) {
+            if (shouldCommit) {
+              // FINAL/REFINE: Commit to history
+              // AAA: Segment-based dedup - only commit if this segment not already committed
+              // Fallback: if no segment_id (other providers), always append (sequential mode)
+              const hasSegmentId = segmentId !== undefined;
+              const alreadyCommitted = hasSegmentId && segmentId < lastCommittedSegmentId;
+              
+              // Change 6: If refine for same segment as last committed, REPLACE last entry
+              // Benefit: better quality without duplicate lines
+              const isRefineUpdate = hasSegmentId && isRefine && segmentId === lastCommittedSegmentId && translatedHistory.length > 0;
+              
+              if (isRefineUpdate) {
+                translatedHistory[translatedHistory.length - 1] = translation;
+              } else if (!alreadyCommitted) {
                 translatedHistory.push(translation);
                 if (translatedHistory.length > MAX_HISTORY_LINES) {
                   const trimmed = translatedHistory.length - MAX_HISTORY_LINES;
                   translatedHistory.splice(0, trimmed);
-                  console.log(`[LinguaLive] Trimmed ${trimmed} lines from translatedHistory`);
                 }
-                lastTranslatedText = translation;
+                if (hasSegmentId) {
+                  lastCommittedSegmentId = segmentId;
+                }
               }
-              // Update history span, clear draft
+              // Update history span with space separator (no blank lines), clear draft
               historySpan.textContent = translatedHistory.join(" ") + " ";
               if (draftSpan) draftSpan.textContent = "";
               currentDraftTranslation = null;
             } else {
-              // FAST PASS: Update draft span only
+              // FAST PASS (not final): Update draft span only (preview)
+              // This allows multiple fast updates to the same segment
               currentDraftTranslation = translation;
               if (draftSpan) draftSpan.textContent = translation;
             }
@@ -840,6 +1041,12 @@ async function connectWebSocket(actualSampleRate: number): Promise<void> {
           }
         }
         
+        // Handle info messages from backend (e.g., music detection)
+        else if (data.type === "info") {
+          console.log("[LinguaLive] Backend info:", data.message);
+          showInfoToast(data.message);
+        }
+        
         else if (data.type === "error") {
           console.error("WebSocket error:", data.message);
           lastErrorMessage = data.message;
@@ -857,10 +1064,29 @@ async function connectWebSocket(actualSampleRate: number): Promise<void> {
       reject(new Error("WebSocket connection failed"));
     };
 
-    websocket.onclose = () => {
-      console.log("WebSocket closed");
+    websocket.onclose = (event) => {
+      console.log(`[LinguaLive] WebSocket closed: code=${event.code}, reason="${event.reason}", clean=${event.wasClean}`);
+      
+      // Log abnormal closures
+      if (!event.wasClean) {
+        console.error('[LinguaLive] ⚠️ WebSocket closed abnormally');
+      }
+      
+      // Common close codes
+      if (event.code === 1006) {
+        console.error('[LinguaLive] ⚠️ Connection lost (code 1006 - abnormal closure)');
+        showErrorToast('Connection lost - click Start to reconnect');
+      } else if (event.code === 1000) {
+        console.log('[LinguaLive] WebSocket closed normally');
+      }
+      
+      // Stop playback rate monitoring when WS closes
+      stopPlaybackRateMonitoring();
+      
       if (hudMode === "capturing") {
-        // Unexpected close
+        // Unexpected close - cleanup properly
+        console.warn('[LinguaLive] WebSocket closed while capturing - cleaning up');
+        cleanupCapture();
         hudMode = "idle";
         updateHudUI();
       }
@@ -900,6 +1126,21 @@ async function setupAudioPipeline(stream: MediaStream, actualSampleRate: number)
   let firstFrameSent = false;
   let lastAudioFrameAt = Date.now();
   
+  // DEBUG: Start 2s heartbeat for capture diagnostics
+  let debugHeartbeatInterval: ReturnType<typeof setInterval> | null = null;
+  if (DEBUG_STALLS) {
+    debugHeartbeatInterval = setInterval(() => {
+      if (hudMode !== 'capturing') {
+        if (debugHeartbeatInterval) clearInterval(debugHeartbeatInterval);
+        return;
+      }
+      const timeSinceFrame = Date.now() - lastAudioFrameAt;
+      const buffered = websocket?.bufferedAmount ?? 0;
+      const audioState = audioContext?.state ?? 'unknown';
+      console.log(`[LinguaLive] DEBUG_HB: {"wsState":"${wsReadyState}","buffered":${buffered},"audioState":"${audioState}","binary":${useBinaryAudio},"frameDelta":${timeSinceFrame}}`);
+    }, 2000);
+  }
+  
   // AAA: Show "Waiting for audio..." if no frame sent after 2s
   const waitingForAudioTimeout = setTimeout(() => {
     if (!firstFrameSent) {
@@ -908,23 +1149,21 @@ async function setupAudioPipeline(stream: MediaStream, actualSampleRate: number)
     }
   }, 2000);
   
-  // x2: Watchdog for stalled audio pipeline - auto-recover if no frames >2s
+  // Watchdog disabled: Audio gaps are normal (pause, silence, slow playback)
+  // We only log for debugging, never restart - let the stream continue naturally
+  let lastWatchdogWarnAt = 0;
   const audioWatchdog = setInterval(() => {
     if (firstFrameSent && hudMode === 'capturing') {
       const timeSinceLastFrame = Date.now() - lastAudioFrameAt;
-      if (timeSinceLastFrame > 2000) {
-        console.warn(`[LinguaLive] Audio stall detected (${timeSinceLastFrame}ms) → restarting pipeline`);
-        showWarningToast("Audio stalled - restarting...");
-        // Soft restart: recreate worklet without new share prompt
-        clearInterval(audioWatchdog);
-        cleanupCapture().then(() => {
-          // Re-capture with same stream if still active
-          if (currentStream && currentStream.active) {
-            setupAudioPipeline(currentStream, actualSampleRate).catch(err => {
-              console.error("Failed to restart audio pipeline:", err);
-            });
-          }
-        });
+      // Only log warning once every 10s to avoid spam (no restart!)
+      if (timeSinceLastFrame > 5000 && Date.now() - lastWatchdogWarnAt > 10000) {
+        lastWatchdogWarnAt = Date.now();
+        if (DEBUG_STALLS) {
+          const buffered = websocket?.bufferedAmount ?? 0;
+          console.log(`[LinguaLive] DEBUG_WD: {"timeSince":${timeSinceLastFrame},"firstFrame":${firstFrameSent},"lastAt":${lastAudioFrameAt},"buffered":${buffered}}`);
+        }
+        // Soft warn only - no restart, stream continues
+        console.log(`[LinguaLive] Audio gap detected (${timeSinceLastFrame}ms) - waiting for audio to resume`);
       }
     }
   }, 3000); // Check every 3s
@@ -1069,6 +1308,9 @@ function cleanupCapture(): void {
   pendingPartialUpdate = null;
   wsReadyState = "waiting";
   detectedLanguage = null;
+  
+  // Stop playback rate monitoring
+  stopPlaybackRateMonitoring();
   
   // Close WebSocket with guard
   if (websocket) {
